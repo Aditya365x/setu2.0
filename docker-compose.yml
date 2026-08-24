@@ -1,0 +1,106 @@
+# SETU — the entire stack, offline-capable.
+# One command, no internet required:  docker compose up --build
+name: setu
+
+services:
+  db:
+    image: postgis/postgis:16-3.4
+    environment:
+      POSTGRES_USER: setu
+      POSTGRES_PASSWORD: setu
+      POSTGRES_DB: setu
+    ports: ["5433:5432"]
+    volumes:
+      - db_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U setu -d setu"]
+      interval: 3s
+      timeout: 3s
+      retries: 20
+
+  redis:
+    image: redis:7-alpine
+    ports: ["6379:6379"]
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 3s
+      timeout: 3s
+      retries: 20
+
+  api:
+    build: ./backend
+    command: uvicorn app.main:app --host 0.0.0.0 --port 8000
+    environment:
+      DATABASE_URL: postgresql+asyncpg://setu:setu@db:5432/setu
+      REDIS_URL: redis://redis:6379/0
+      ROUTING_PROVIDER: ${ROUTING_PROVIDER:-haversine}
+      OSRM_URL: http://osrm:5000
+      SMS_PROVIDER: ${SMS_PROVIDER:-mock}
+      STORAGE_PROVIDER: ${STORAGE_PROVIDER:-local}
+      OFFLINE_MODE: ${OFFLINE_MODE:-true}
+    ports: ["8000:8000"]
+    volumes:
+      - media:/data/media
+      - ./fixtures:/app/fixtures:ro
+    depends_on:
+      db: {condition: service_healthy}
+      redis: {condition: service_healthy}
+
+  worker:
+    build: ./backend
+    command: python -m app.workers.run
+    environment:
+      DATABASE_URL: postgresql+asyncpg://setu:setu@db:5432/setu
+      REDIS_URL: redis://redis:6379/0
+      ROUTING_PROVIDER: ${ROUTING_PROVIDER:-haversine}
+      OSRM_URL: http://osrm:5000
+      OFFLINE_MODE: ${OFFLINE_MODE:-true}
+    volumes:
+      - media:/data/media
+      - ./fixtures:/app/fixtures:ro
+    depends_on:
+      db: {condition: service_healthy}
+      redis: {condition: service_healthy}
+
+  dashboard:
+    build: ./frontend-dashboard
+    ports: ["5173:80"]
+    depends_on: [api]
+
+  pwa:
+    build: ./frontend-pwa
+    # 5174 is plain HTTP, fine on the demo laptop. 5443 is HTTPS, and a phone
+    # needs it: geolocation, camera and service workers are all gated behind a
+    # secure context on any host that is not localhost.
+    #
+    # Set CERT_HOSTS to this machine's LAN IP so the self-signed certificate
+    # actually covers the URL the phone opens:
+    #   CERT_HOSTS=192.168.2.102 docker compose up -d --build pwa
+    ports: ["5174:80", "5443:443"]
+    environment:
+      CERT_HOSTS: ${CERT_HOSTS:-localhost}
+    depends_on: [api]
+
+  # ── OSRM: real road-network ETAs, fully offline ───────────────────────────
+  # Deferred by default; the routing adapter runs on the haversine fallback
+  # (§6.4) until this is enabled. To turn it on:
+  #
+  #   1. curl -O https://download.geofabrik.de/asia/india/odisha-latest.osm.pbf
+  #      (put it in ./osrm/ — do this WELL before demo day, not on the night)
+  #   2. docker run -t -v "$PWD/osrm:/data" osrm/osrm-backend \
+  #        osrm-extract -p /opt/car.lua /data/odisha-latest.osm.pbf
+  #   3. docker run -t -v "$PWD/osrm:/data" osrm/osrm-backend \
+  #        osrm-partition /data/odisha-latest.osrm
+  #   4. docker run -t -v "$PWD/osrm:/data" osrm/osrm-backend \
+  #        osrm-customize /data/odisha-latest.osrm
+  #   5. Uncomment below, then: ROUTING_PROVIDER=osrm docker compose up
+  #
+  # osrm:
+  #   image: osrm/osrm-backend
+  #   command: osrm-routed --algorithm mld /data/odisha-latest.osrm
+  #   volumes: ["./osrm:/data"]
+  #   ports: ["5000:5000"]
+
+volumes:
+  db_data:
+  media:

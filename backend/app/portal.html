@@ -1,0 +1,306 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>SETU — Control Room Index</title>
+<style>
+  :root{
+    --bg:#0b0f14; --panel:#111823; --panel2:#161f2c; --line:#22303f;
+    --text:#e6edf5; --muted:#8496a8; --accent:#22d3ee; --good:#34d399;
+    --warn:#fbbf24; --danger:#f87171;
+  }
+  *{box-sizing:border-box}
+  body{margin:0;background:var(--bg);color:var(--text);
+       font:14px/1.5 ui-sans-serif,system-ui,"Segoe UI",Roboto,sans-serif;
+       -webkit-font-smoothing:antialiased}
+  a{color:inherit;text-decoration:none}
+  .wrap{max-width:1100px;margin:0 auto;padding:32px 20px 64px}
+
+  header{display:flex;align-items:baseline;gap:14px;flex-wrap:wrap;margin-bottom:6px}
+  h1{font-size:24px;letter-spacing:.14em;margin:0;font-weight:800}
+  .sub{color:var(--muted)}
+  .quote{color:var(--muted);font-style:italic;margin:14px 0 28px;
+         border-left:2px solid var(--line);padding-left:14px;max-width:62ch}
+
+  h2{font-size:11px;text-transform:uppercase;letter-spacing:.1em;
+     color:var(--muted);margin:32px 0 12px;font-weight:600}
+
+  .grid{display:grid;gap:12px;grid-template-columns:repeat(auto-fill,minmax(250px,1fr))}
+  .card{display:block;background:var(--panel);border:1px solid var(--line);
+        border-radius:10px;padding:14px 16px;transition:border-color .15s}
+  .card:hover{border-color:#3a4d63}
+  .card__name{font-weight:650;margin-bottom:3px}
+  .card__url{color:var(--accent);font-family:ui-monospace,monospace;font-size:12px}
+  .card__note{color:var(--muted);font-size:12px;margin-top:6px}
+
+  .tiles{display:grid;gap:10px;grid-template-columns:repeat(auto-fill,minmax(140px,1fr))}
+  .tile{background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:12px 14px}
+  .tile__label{color:var(--muted);font-size:10px;text-transform:uppercase;letter-spacing:.08em}
+  .tile__value{font-size:22px;font-weight:650;font-variant-numeric:tabular-nums}
+  .tile__sub{color:var(--muted);font-size:11px}
+  .good{color:var(--good)} .warn{color:var(--warn)} .danger{color:var(--danger)}
+
+  table{width:100%;border-collapse:collapse;font-size:12.5px}
+  .scroll{overflow-x:auto;border:1px solid var(--line);border-radius:10px;background:var(--panel)}
+  th{text-align:left;color:var(--muted);font-weight:600;font-size:10px;
+     text-transform:uppercase;letter-spacing:.07em;padding:9px 12px;
+     border-bottom:1px solid var(--line);white-space:nowrap}
+  td{padding:8px 12px;border-bottom:1px solid #1a2532;white-space:nowrap}
+  tr:last-child td{border-bottom:none}
+  .mono{font-family:ui-monospace,monospace}
+
+  .pill{font-size:10px;padding:2px 7px;border-radius:999px;
+        text-transform:uppercase;letter-spacing:.05em}
+  .pill--app{background:rgba(34,211,238,.15);color:var(--accent)}
+  .pill--sms{background:rgba(52,211,153,.15);color:var(--good)}
+  .pill--ivr{background:rgba(251,191,36,.15);color:var(--warn)}
+  .pill--manual,.pill--field_unit{background:rgba(132,150,168,.15);color:var(--muted)}
+  .pill--quarantined{background:rgba(248,113,113,.15);color:var(--danger)}
+  .pill--clustered{background:rgba(52,211,153,.15);color:var(--good)}
+  .pill--received{background:rgba(132,150,168,.15);color:var(--muted)}
+
+  .bar{display:flex;gap:10px;align-items:center;flex-wrap:wrap;margin-bottom:12px}
+  input,select,button{font:inherit;color:var(--text);background:var(--panel2);
+    border:1px solid var(--line);border-radius:8px;padding:8px 11px}
+  button{cursor:pointer}
+  button:hover{border-color:#3a4d63}
+  .muted{color:var(--muted)}
+  .lookup__out{margin-top:10px;padding:12px 14px;background:var(--panel2);
+    border:1px solid var(--line);border-radius:8px;display:none}
+  footer{margin-top:44px;color:var(--muted);font-size:12px;line-height:1.7}
+</style>
+</head>
+<body>
+<div class="wrap">
+
+  <header>
+    <h1>SETU</h1>
+    <span class="sub">Ganjam DEOC · Odisha — control room index</span>
+  </header>
+  <p class="quote">India's warning system already works. What breaks is the six hours after the warning.</p>
+
+  <h2>Live state</h2>
+  <div class="tiles" id="tiles"><div class="muted">loading…</div></div>
+
+  <h2>Surfaces</h2>
+  <div class="grid">
+    <a class="card" href="http://localhost:5173" target="_blank">
+      <div class="card__name">DEOC Dashboard</div>
+      <div class="card__url">localhost:5173</div>
+      <div class="card__note">Map, incident queue, severity heatmap, Greedy↔Optimized toggle.</div>
+    </a>
+    <a class="card" href="http://localhost:5174" target="_blank">
+      <div class="card__name">Citizen PWA</div>
+      <div class="card__url">localhost:5174</div>
+      <div class="card__note">Report form. On this laptop only — a phone needs the HTTPS link.</div>
+    </a>
+    <a class="card" id="pwa-https" href="#" target="_blank">
+      <div class="card__name">Citizen PWA over HTTPS</div>
+      <div class="card__url" id="pwa-https-url">…:5443</div>
+      <div class="card__note">Use this on a phone. GPS and camera need a secure context.</div>
+    </a>
+    <a class="card" href="/docs" target="_blank">
+      <div class="card__name">API — Swagger</div>
+      <div class="card__url">localhost:8000/docs</div>
+      <div class="card__note">All endpoints, executable against the running stack.</div>
+    </a>
+    <a class="card" href="/redoc" target="_blank">
+      <div class="card__name">API — ReDoc</div>
+      <div class="card__url">localhost:8000/redoc</div>
+      <div class="card__note">Cleaner read-only reference.</div>
+    </a>
+    <a class="card" href="/api/v1/metrics" target="_blank">
+      <div class="card__name">Raw metrics JSON</div>
+      <div class="card__url">/api/v1/metrics</div>
+      <div class="card__note">The numbers behind the dashboard strip.</div>
+    </a>
+  </div>
+
+  <h2>Track a report by reference code</h2>
+  <div class="bar">
+    <input id="ref" placeholder="e.g. A7K2" maxlength="6" style="text-transform:uppercase;letter-spacing:.16em;width:150px">
+    <button onclick="lookup()">Look up</button>
+    <span class="muted">The code the PWA and the SMS reply hand back to a citizen.</span>
+  </div>
+  <div class="lookup__out" id="lookup-out"></div>
+
+  <h2>Reports — the raw inbound stream</h2>
+  <div class="bar">
+    <select id="f-source">
+      <option value="">All channels</option>
+      <option value="app">App</option><option value="sms">SMS</option>
+      <option value="ivr">IVR</option><option value="field_unit">Field unit</option>
+      <option value="manual">Manual / radio</option>
+    </select>
+    <select id="f-status">
+      <option value="">All statuses</option>
+      <option value="received">Received</option>
+      <option value="clustered">Clustered</option>
+      <option value="quarantined">Quarantined</option>
+    </select>
+    <select id="f-limit">
+      <option value="25">25</option><option value="50" selected>50</option>
+      <option value="200">200</option>
+    </select>
+    <button onclick="loadReports()">Refresh</button>
+    <span class="muted" id="report-count"></span>
+  </div>
+  <div class="scroll">
+    <table>
+      <thead><tr>
+        <th>Ref</th><th>Channel</th><th>Hazard</th><th>Sev</th><th>People</th>
+        <th>Trust</th><th>Accuracy</th><th>Status</th><th>Incident</th><th>What was reported</th><th>When</th>
+      </tr></thead>
+      <tbody id="reports"><tr><td colspan="11" class="muted">loading…</td></tr></tbody>
+    </table>
+  </div>
+
+  <h2>Incidents — what the reports became</h2>
+  <div class="scroll">
+    <table>
+      <thead><tr>
+        <th>#</th><th>Hazard</th><th>Severity</th><th>Reports</th>
+        <th>People</th><th>Status</th><th>SLA</th>
+      </tr></thead>
+      <tbody id="incidents"><tr><td colspan="7" class="muted">loading…</td></tr></tbody>
+    </table>
+  </div>
+
+  <footer>
+    Reports are deduplicated into incidents by spatio-temporal DBSCAN, scored for
+    severity and trust, then assigned by the Hungarian algorithm. Nothing here is
+    a trained model — it is operations research, deterministic and auditable.<br>
+    Auto-refreshing every 10 seconds.
+  </footer>
+</div>
+
+<script>
+const $ = (id) => document.getElementById(id)
+const esc = (s) => String(s ?? '').replace(/[<>&]/g, (c) => ({'<':'&lt;','>':'&gt;','&':'&amp;'}[c]))
+const ago = (ts) => {
+  const s = (Date.now() - new Date(ts).getTime()) / 1000
+  if (s < 60) return `${Math.floor(s)}s ago`
+  if (s < 3600) return `${Math.floor(s / 60)}m ago`
+  return `${Math.floor(s / 3600)}h ago`
+}
+
+// The HTTPS card has to point at whatever host is serving this page, so the
+// link still works when opened from another machine on the LAN.
+const host = location.hostname
+$('pwa-https').href = `https://${host}:5443`
+$('pwa-https-url').textContent = `${host}:5443`
+
+async function loadMetrics() {
+  const m = await (await fetch('/api/v1/metrics')).json()
+  const d = m.mean_response_min.greedy > 0
+    ? Math.round((m.mean_response_min.greedy - m.mean_response_min.optimized) / m.mean_response_min.greedy * 100)
+    : null
+  const tile = (label, value, sub, cls) =>
+    `<div class="tile"><div class="tile__label">${label}</div>
+     <div class="tile__value ${cls || ''}">${value}</div>
+     <div class="tile__sub">${sub || '&nbsp;'}</div></div>`
+
+  $('tiles').innerHTML = [
+    tile('Open incidents', m.open_incidents),
+    tile('Critical unassigned', m.critical_unassigned, '', m.critical_unassigned > 0 ? 'danger' : 'good'),
+    tile('Units free', m.units_free, `${m.units_committed} committed`),
+    tile('Mean response', `${m.mean_response_min.optimized.toFixed(1)}m`,
+         d !== null ? `greedy ${m.mean_response_min.greedy.toFixed(1)}m (−${d}%)` : '', d > 0 ? 'good' : ''),
+    tile('Worst case', `${m.worst_case_min.optimized.toFixed(0)}m`,
+         `greedy ${m.worst_case_min.greedy.toFixed(0)}m`),
+    tile('Incidents served', m.incidents_served.optimized, `greedy ${m.incidents_served.greedy}`,
+         m.incidents_served.optimized > m.incidents_served.greedy ? 'good' : ''),
+    tile('Quarantined', m.quarantined, 'low trust', m.quarantined > 0 ? 'warn' : ''),
+    tile('Solver cycle', m.last_cycle_ms != null ? `${m.last_cycle_ms}ms` : '—',
+         m.degraded_eta ? 'ETAs approximate' : 'road ETAs'),
+  ].join('')
+}
+
+async function loadReports() {
+  const qs = new URLSearchParams({ limit: $('f-limit').value })
+  if ($('f-source').value) qs.set('source', $('f-source').value)
+  if ($('f-status').value) qs.set('status', $('f-status').value)
+
+  const data = await (await fetch(`/api/v1/reports?${qs}`)).json()
+  $('report-count').textContent = `showing ${data.count} of ${data.total} total`
+
+  if (!data.reports.length) {
+    $('reports').innerHTML = '<tr><td colspan="11" class="muted">No reports yet — run the Cyclone Landfall scenario.</td></tr>'
+    return
+  }
+
+  $('reports').innerHTML = data.reports.map((r) => {
+    const acc = r.gps_accuracy_m == null ? '—'
+      : r.gps_accuracy_m >= 1000 ? `<span class="warn">±${(r.gps_accuracy_m / 1000).toFixed(1)}km</span>`
+      : `±${r.gps_accuracy_m}m`
+    const trustCls = r.trust_score < 0.35 ? 'danger' : r.trust_score >= 0.7 ? 'good' : ''
+    return `<tr>
+      <td class="mono">${esc(r.reference_code)}</td>
+      <td><span class="pill pill--${esc(r.source)}">${esc(r.source)}</span></td>
+      <td>${esc(r.hazard_type).replace(/_/g, ' ')}</td>
+      <td>${r.severity_raw ?? '—'}</td>
+      <td>${r.people_reported ?? '—'}</td>
+      <td class="${trustCls}">${r.trust_score.toFixed(2)}</td>
+      <td>${acc}</td>
+      <td><span class="pill pill--${esc(r.status)}">${esc(r.status)}</span></td>
+      <td>${r.incident_id ? `#${r.incident_id}` : '<span class="muted">—</span>'}</td>
+      <td>${esc((r.description || r.raw_text || '').slice(0, 52)) || '<span class="muted">—</span>'}</td>
+      <td class="muted">${ago(r.created_at)}</td>
+    </tr>`
+  }).join('')
+}
+
+async function loadIncidents() {
+  const list = await (await fetch('/api/v1/incidents')).json()
+  if (!list.length) {
+    $('incidents').innerHTML = '<tr><td colspan="7" class="muted">No incidents yet.</td></tr>'
+    return
+  }
+  $('incidents').innerHTML = list.slice(0, 40).map((i) => {
+    const cls = i.severity_score >= 75 ? 'danger' : i.severity_score >= 55 ? 'warn' : ''
+    let sla = '<span class="muted">—</span>'
+    if (i.sla_deadline) {
+      const left = (new Date(i.sla_deadline).getTime() - Date.now()) / 60000
+      sla = left < 0 ? `<span class="danger">breached ${Math.abs(left).toFixed(0)}m</span>`
+                     : `${left.toFixed(0)}m left`
+    }
+    return `<tr>
+      <td class="mono">#${i.id}</td>
+      <td>${esc(i.hazard_type).replace(/_/g, ' ')}</td>
+      <td class="${cls}"><strong>${i.severity_score.toFixed(1)}</strong></td>
+      <td>${i.report_count}</td>
+      <td>${i.people_affected_est}</td>
+      <td>${esc(i.status)}</td>
+      <td>${sla}</td>
+    </tr>`
+  }).join('')
+}
+
+async function lookup() {
+  const ref = $('ref').value.trim()
+  const out = $('lookup-out')
+  if (!ref) return
+  out.style.display = 'block'
+  out.innerHTML = 'looking up…'
+  const res = await fetch(`/api/v1/reports/${encodeURIComponent(ref)}`)
+  if (!res.ok) {
+    out.innerHTML = `<span class="danger">No report found with reference ${esc(ref.toUpperCase())}.</span>`
+    return
+  }
+  const r = await res.json()
+  out.innerHTML = `<strong class="mono">${esc(r.reference_code)}</strong> · ${esc(r.hazard_type).replace(/_/g,' ')}
+    <div style="margin-top:6px"><span class="pill pill--clustered">${esc(r.stage).replace(/_/g,' ')}</span>
+    &nbsp;${esc(r.detail)}${r.eta_minutes ? ` · ETA ${r.eta_minutes} min` : ''}</div>`
+}
+
+$('ref').addEventListener('keydown', (e) => { if (e.key === 'Enter') lookup() })
+
+async function refreshAll() {
+  try { await Promise.all([loadMetrics(), loadReports(), loadIncidents()]) } catch (e) { /* stack restarting */ }
+}
+refreshAll()
+setInterval(refreshAll, 10000)
+</script>
+</body>
+</html>

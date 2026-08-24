@@ -1,0 +1,51 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  Recorded-shape CAP 1.2 fixture for offline demo (OFFLINE_MODE=true).
+
+  This is a synthetic alert in the exact structure NDMA SACHET emits, so the
+  parser exercised here is the same one that runs against the live feed. It is
+  NOT a real IMD bulletin and must never be presented as one.
+
+  The polygon covers the Ganjam coastal strip from Gopalpur-on-Sea north past
+  Chatrapur and the Rushikulya mouth to Rambha.
+-->
+<alert xmlns="urn:oasis:names:tc:emergency:cap:1.2">
+  <identifier>urn:oid:2.49.0.1.356.0.SETU-DEMO-GANJAM-001</identifier>
+  <sender>imd.cyclone@imd.gov.in</sender>
+  <sent>2026-08-22T09:00:00+05:30</sent>
+  <status>Actual</status>
+  <msgType>Alert</msgType>
+  <scope>Public</scope>
+  <info>
+    <language>en-IN</language>
+    <category>Met</category>
+    <event>Cyclone Warning</event>
+    <urgency>Immediate</urgency>
+    <severity>Extreme</severity>
+    <certainty>Observed</certainty>
+    <senderName>India Meteorological Department</senderName>
+    <headline>Severe Cyclonic Storm to cross Odisha coast near Gopalpur</headline>
+    <description>
+      A Severe Cyclonic Storm over the west-central Bay of Bengal is very likely
+      to cross the Odisha coast between Gopalpur and Chatrapur during the next
+      12 hours, with sustained wind speeds of 110-120 kmph gusting to 135 kmph,
+      a storm surge of 1.5-2.0 m above astronomical tide, and extremely heavy
+      rainfall over Ganjam district.
+    </description>
+    <instruction>
+      Move to the nearest designated cyclone shelter. Do not cross flowing
+      water. Fishermen are advised not to venture into the sea. Keep mobile
+      phones charged and follow instructions from the District Administration.
+    </instruction>
+    <effective>2026-08-22T09:00:00+05:30</effective>
+    <expires>2026-08-23T21:00:00+05:30</expires>
+    <area>
+      <areaDesc>Ganjam district coastal belt, Odisha</areaDesc>
+      <polygon>19.20,84.85 19.24,84.95 19.32,85.02 19.40,85.06 19.50,85.12 19.58,85.14 19.62,85.06 19.54,84.98 19.44,84.92 19.36,84.88 19.28,84.82 19.22,84.78 19.20,84.85</polygon>
+      <geocode>
+        <valueName>LGD</valueName>
+        <value>381</value>
+      </geocode>
+    </area>
+  </info>
+</alert>

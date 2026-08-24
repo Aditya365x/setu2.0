@@ -1,0 +1,387 @@
+/* Used in the rain, one-handed, in panic.
+   Minimum 48px touch targets, high contrast, submit reachable by thumb. */
+
+:root {
+  --bg: #0b0f14;
+  --panel: #141c27;
+  --line: #253243;
+  --text: #eef4fa;
+  --muted: #8fa1b4;
+  --accent: #22d3ee;
+  --danger: #f87171;
+  --warn: #fbbf24;
+}
+
+* { box-sizing: border-box; }
+
+html, body, #root { height: 100%; margin: 0; }
+
+body {
+  background: var(--bg);
+  color: var(--text);
+  font-family: ui-sans-serif, system-ui, "Segoe UI", Roboto, sans-serif;
+  font-size: 16px;
+  -webkit-font-smoothing: antialiased;
+}
+
+button, input, textarea { font: inherit; color: inherit; }
+
+.screen {
+  max-width: 520px;
+  margin: 0 auto;
+  padding: 16px 16px calc(24px + env(safe-area-inset-bottom));
+  display: flex;
+  flex-direction: column;
+  gap: 18px;
+  min-height: 100%;
+}
+
+.head { display: flex; align-items: flex-start; justify-content: space-between; }
+.head__brand { font-weight: 800; letter-spacing: 0.16em; font-size: 20px; }
+.head__sub { color: var(--muted); font-size: 14px; }
+
+.langs { display: flex; gap: 6px; }
+.langs button {
+  min-width: 44px;
+  min-height: 36px;
+  background: var(--panel);
+  border: 1px solid var(--line);
+  border-radius: 8px;
+}
+.langs button.is-active { background: var(--accent); color: #04222a; border-color: transparent; font-weight: 700; }
+
+h2 { font-size: 14px; color: var(--muted); margin: 0 0 8px; font-weight: 600; }
+
+.banner {
+  padding: 10px 12px;
+  border-radius: 8px;
+  background: rgba(251, 191, 36, 0.14);
+  color: var(--warn);
+  font-size: 14px;
+  line-height: 1.4;
+}
+.banner--offline { background: rgba(248, 113, 113, 0.14); color: var(--danger); }
+
+/* ── hazard grid: big targets, icon + word ───────────────────────────── */
+.hazards { display: grid; grid-template-columns: repeat(4, 1fr); gap: 8px; }
+.hazard {
+  min-height: 76px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 4px;
+  padding: 6px 2px;
+  background: var(--panel);
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  font-size: 12px;
+  line-height: 1.15;
+  text-align: center;
+}
+.hazard.is-active { border-color: var(--accent); background: rgba(34, 211, 238, 0.12); }
+.hazard__icon { font-size: 24px; }
+
+/* ── severity ────────────────────────────────────────────────────────── */
+.severity { display: grid; grid-template-columns: repeat(5, 1fr); gap: 8px; }
+.sev {
+  min-height: 56px;
+  font-size: 20px;
+  font-weight: 700;
+  background: var(--panel);
+  border: 1px solid var(--line);
+  border-radius: 12px;
+}
+.sev.is-active { background: var(--accent); color: #04222a; border-color: transparent; }
+.scale { display: flex; justify-content: space-between; color: var(--muted); font-size: 12px; margin-top: 6px; }
+
+.field {
+  width: 100%;
+  min-height: 52px;
+  padding: 12px;
+  background: var(--panel);
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  resize: none;
+}
+.field::placeholder { color: #5b6b7d; }
+
+.photo {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 56px;
+  border: 1px dashed var(--line);
+  border-radius: 12px;
+  background: var(--panel);
+}
+.photo input { display: none; }
+
+.gps { color: var(--muted); font-size: 13px; text-align: center; }
+.gps--error { color: var(--danger); }
+
+.big {
+  min-height: 60px;
+  border-radius: 14px;
+  border: none;
+  font-size: 18px;
+  font-weight: 700;
+  background: var(--accent);
+  color: #04222a;
+}
+.big:disabled { background: #24313f; color: #5b6b7d; }
+.submit { position: sticky; bottom: 12px; }
+
+.fineprint { color: var(--muted); font-size: 12px; text-align: center; line-height: 1.5; margin: 0; }
+
+/* ── confirmation ────────────────────────────────────────────────────── */
+.screen--done { justify-content: center; align-items: center; text-align: center; }
+.done__mark { font-size: 56px; }
+.screen--done h1 { font-size: 24px; margin: 0; }
+.screen--done p { color: var(--muted); line-height: 1.55; margin: 0; max-width: 34ch; }
+.ref {
+  background: var(--panel);
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  padding: 14px 20px;
+  color: var(--muted);
+}
+.ref strong { display: block; font-size: 30px; letter-spacing: 0.16em; color: var(--text); margin-top: 4px; }
+
+/* ── location fallback ───────────────────────────────────────────────────
+   Shown whenever GPS cannot give us a precise fix. Never a dead end: a report
+   with a 3 km uncertainty circle is worth far more than no report, and the
+   optimizer already handles coarse positions correctly. */
+.gps--coarse { color: var(--warn); }
+
+.fallback {
+  background: var(--panel);
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  padding: 12px;
+}
+.fallback h2 { margin-bottom: 8px; }
+.fallback__row { display: flex; gap: 8px; }
+.fallback__row .field { flex: 1; letter-spacing: 0.18em; font-size: 18px; }
+.fallback__row button {
+  min-height: 52px;
+  min-width: 96px;
+  border-radius: 12px;
+  border: 1px solid var(--line);
+  background: var(--panel);
+  font-weight: 600;
+}
+.fallback__row button:disabled { color: #5b6b7d; }
+
+/* An out-of-district PIN code is a real answer, not a validation error to
+   whisper. Same weight as the offline banner so it is impossible to miss on a
+   phone held at arm's length in bad light. */
+.fallback__error {
+  margin: 0.6rem 0 0;
+  padding: 0.6rem 0.75rem;
+  border-radius: 8px;
+  background: #7f1d1d;
+  color: #fee2e2;
+  font-size: 0.9rem;
+  line-height: 1.35;
+}
+
+/* ── §4.1 home screen ───────────────────────────────────────────────────── */
+/* The report button is deliberately oversized. In an emergency this is the
+   only control that matters and it should be hittable without aiming. */
+.panic {
+  display: block;
+  width: 100%;
+  margin: 1.5rem 0;
+  padding: 2.2rem 1rem;
+  border: none;
+  border-radius: 16px;
+  background: #b91c1c;
+  color: #fff;
+  font-size: 1.5rem;
+  font-weight: 800;
+  letter-spacing: 0.02em;
+  line-height: 1.2;
+  box-shadow: 0 6px 20px rgba(185, 28, 28, 0.35);
+}
+.panic:active { background: #991b1b; transform: translateY(1px); }
+
+.homenav { display: grid; gap: 10px; }
+.homenav button {
+  padding: 1rem;
+  border: 1px solid #24303d;
+  border-radius: 12px;
+  background: #131b24;
+  color: #d7e2ee;
+  font-size: 1rem;
+  text-align: left;
+}
+.homenav button:active { background: #1b2734; }
+
+.ghost {
+  display: block;
+  width: 100%;
+  margin-top: 10px;
+  padding: 0.9rem;
+  border: 1px solid #2b3a4a;
+  border-radius: 12px;
+  background: transparent;
+  color: #9fb3c8;
+  font-size: 1rem;
+}
+
+/* ── secondary screen header ────────────────────────────────────────────── */
+.subhead { display: flex; align-items: center; gap: 10px; margin-bottom: 1rem; }
+.subhead__back {
+  border: none; background: none; color: #6ea8fe;
+  font-size: 1.05rem; padding: 4px 2px;
+}
+.subhead__title { font-size: 1.15rem; margin: 0; }
+
+/* ── §6 vulnerable-group chips ──────────────────────────────────────────── */
+.chips { display: flex; flex-wrap: wrap; gap: 8px; }
+.chip {
+  padding: 0.6rem 0.95rem;
+  border: 1px solid #2b3a4a;
+  border-radius: 999px;
+  background: #131b24;
+  color: #9fb3c8;
+  font-size: 0.95rem;
+}
+.chip.is-active {
+  background: #7c2d12;
+  border-color: #ea580c;
+  color: #ffedd5;
+  font-weight: 600;
+}
+
+/* ── §11 tracking timeline ──────────────────────────────────────────────── */
+.timeline { list-style: none; margin: 1rem 0 0; padding: 0; }
+.timeline__step {
+  display: flex; align-items: center; gap: 12px;
+  padding: 0.65rem 0;
+  color: #64748b;
+  border-left: 2px solid #24303d;
+  margin-left: 10px;
+  padding-left: 16px;
+}
+.timeline__step.is-done { color: #cbd5e1; border-left-color: #2f80ed; }
+.timeline__step.is-current { color: #7dd3fc; font-weight: 700; }
+.timeline__mark { width: 1.1rem; text-align: center; }
+
+/* ── shared list rows ───────────────────────────────────────────────────── */
+.list { list-style: none; margin: 0; padding: 0; display: grid; gap: 8px; }
+.list__row {
+  display: flex; justify-content: space-between; align-items: center;
+  width: 100%; padding: 0.9rem;
+  border: 1px solid #24303d; border-radius: 12px;
+  background: #131b24; color: #d7e2ee;
+  font-size: 0.98rem; text-decoration: none;
+}
+.list__main { text-align: left; }
+.list__meta { color: #7f9bb5; font-variant-numeric: tabular-nums; }
+.list__meta--num { font-size: 1.15rem; font-weight: 700; color: #6ea8fe; }
+.muted { color: #7f9bb5; font-size: 0.95rem; }
+
+/* ── §12 shelters ───────────────────────────────────────────────────────── */
+.shelter {
+  padding: 0.9rem;
+  border: 1px solid #24303d;
+  border-left-width: 4px;
+  border-radius: 12px;
+  background: #131b24;
+}
+.shelter--open { border-left-color: #22c55e; }
+.shelter--almost_full { border-left-color: #f59e0b; }
+.shelter--full { border-left-color: #ef4444; opacity: 0.75; }
+.shelter__name { font-weight: 600; margin-bottom: 4px; }
+.shelter__meta {
+  display: flex; justify-content: space-between;
+  color: #9fb3c8; font-size: 0.9rem;
+}
+.shelter__state { text-transform: uppercase; letter-spacing: 0.04em; font-size: 0.78rem; }
+.shelter__beds { color: #7f9bb5; font-size: 0.88rem; margin-top: 4px; }
+
+/* ── §13 alert cards ────────────────────────────────────────────────────── */
+.alertcard {
+  padding: 0.9rem; margin-bottom: 10px;
+  border-radius: 12px; border: 1px solid #3a2a12; background: #1c1408;
+}
+.alertcard--extreme { border-color: #b91c1c; background: #2a0f0f; }
+.alertcard--severe  { border-color: #ea580c; background: #26150a; }
+.alertcard__head { font-weight: 700; color: #fdba74; margin-bottom: 6px; }
+.alertcard__line { margin: 0 0 6px; color: #e2e8f0; font-size: 0.95rem; }
+/* The instruction is the only part that says what to DO — never truncated. */
+.alertcard__do {
+  margin: 8px 0 0; padding: 8px 10px;
+  background: #0f172a; border-radius: 8px;
+  color: #bfdbfe; font-size: 0.92rem;
+}
+.alertcard__meta { margin-top: 8px; color: #94a3b8; font-size: 0.8rem; }
+
+.banner--good { background: #064e3b; color: #d1fae5; }
+
+/* ── location: both ways in, always ─────────────────────────────────────── */
+.loc__status {
+  padding: 0.75rem 0.85rem;
+  border-radius: 10px;
+  border-left: 4px solid #2b3a4a;
+  background: #131b24;
+  margin-bottom: 10px;
+}
+.loc__status--gps    { border-left-color: #22c55e; }
+.loc__status--coarse { border-left-color: #f59e0b; }
+.loc__status--wait   { border-left-color: #6ea8fe; }
+.loc__status--err    { border-left-color: #ef4444; }
+.loc__headline { font-size: 0.95rem; color: #d7e2ee; line-height: 1.35; }
+/* Readable coordinates: this is what lands on the operator's map, and it is
+   what a reporter reads out over a phone when the data connection dies. */
+.loc__coords {
+  margin-top: 5px;
+  font-family: ui-monospace, "SF Mono", Menlo, monospace;
+  font-size: 0.88rem;
+  color: #7dd3fc;
+  letter-spacing: 0.02em;
+}
+
+.loc__gps {
+  display: block;
+  width: 100%;
+  padding: 0.95rem;
+  border: 1px solid #2f80ed;
+  border-radius: 12px;
+  background: #12263f;
+  color: #cfe3ff;
+  font-size: 1.02rem;
+  font-weight: 600;
+}
+.loc__gps:active { background: #16324f; }
+.loc__gps:disabled { opacity: 0.6; }
+
+.loc__or {
+  text-align: center;
+  color: #7f9bb5;
+  font-size: 0.85rem;
+  margin: 12px 0 8px;
+}
+
+.loc__shelters {
+  display: block;
+  width: 100%;
+  margin-top: 12px;
+  padding: 0.8rem;
+  border: 1px solid #14532d;
+  border-radius: 12px;
+  background: #0d2818;
+  color: #86efac;
+  font-size: 0.95rem;
+}
+
+/* The submit button is `position: sticky; bottom: 12px`, so while the form is
+   being scrolled it floats up and paints over whatever is behind it. That was
+   hiding the PIN-code input and the shelters link — the reporter could not see
+   the manual location option at all, which is the one thing that has to work
+   when GPS does not.
+   Reserve a button-height of dead space below the location block so the stuck
+   button always hovers over empty page rather than over a control. */
+.loc { padding-bottom: 84px; }

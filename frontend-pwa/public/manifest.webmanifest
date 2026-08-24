@@ -1,0 +1,10 @@
+{
+  "name": "SETU — Emergency Report",
+  "short_name": "SETU",
+  "start_url": "/",
+  "display": "standalone",
+  "background_color": "#0b0f14",
+  "theme_color": "#0b0f14",
+  "description": "Report a flood, collapse or medical emergency to your District Emergency Operations Centre.",
+  "icons": []
+}

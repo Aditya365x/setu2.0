@@ -1,0 +1,80 @@
+"""SETU API.
+
+The ingest side is deliberately thin — validate, persist, enqueue, return 202.
+All the expensive work happens in the worker, so a burst of two thousand
+reports never blocks on the solver.
+"""
+
+import contextlib
+from pathlib import Path
+
+from fastapi import FastAPI
+from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import HTMLResponse
+from fastapi.staticfiles import StaticFiles
+
+from .config import settings
+from .db import apply_schema, engine
+from .routers import ingest, ivr, operations, ws
+
+
+@contextlib.asynccontextmanager
+async def lifespan(app: FastAPI):
+    await apply_schema()
+    yield
+    await engine.dispose()
+
+
+app = FastAPI(
+    title="SETU",
+    description=(
+        "Real-time disaster early-warning and resource coordination. "
+        "The allocation layer between the alert and the boots on the ground."
+    ),
+    version="0.1.0",
+    lifespan=lifespan,
+)
+
+# The dashboard and PWA are served from separate origins in dev and from nginx
+# in the compose stack; both need to reach this API.
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
+
+app.include_router(ingest.router)
+app.include_router(ivr.router)
+app.include_router(operations.router)
+app.include_router(ws.router)
+
+media_root = Path(settings.media_root)
+media_root.mkdir(parents=True, exist_ok=True)
+app.mount(settings.media_base_url, StaticFiles(directory=str(media_root)), name="media")
+
+
+PORTAL = Path(__file__).parent / "portal.html"
+
+
+@app.get("/", response_class=HTMLResponse, include_in_schema=False)
+async def portal() -> str:
+    """One page that links every surface and shows the live inbound stream.
+
+    Useful during a demo — and during a rehearsal, where the question is
+    usually "did that report actually land?" rather than anything the map can
+    answer.
+    """
+    return PORTAL.read_text(encoding="utf-8")
+
+
+@app.get("/health")
+async def health() -> dict:
+    return {
+        "status": "ok",
+        "district_id": settings.district_id,
+        "routing": settings.routing_provider,
+        "sms": settings.sms_provider,
+        "offline_mode": settings.offline_mode,
+    }

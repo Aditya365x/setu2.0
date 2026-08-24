@@ -1,0 +1,118 @@
+# ── Python ────────────────────────────────────────────────────────────────
+.venv/
+venv/
+env/
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+lib60/
+parts/
+sdist/
+var/
+wheels/
+*.egg-info/
+.installed.cfg
+*.egg
+
+# Test and type-checker caches
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+.coverage.*
+htmlcov/
+coverage.xml
+*.cover
+
+# ── Node / frontends ──────────────────────────────────────────────────────
+node_modules/
+.pnp
+.pnp.js
+.yarn/
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+.vite/
+.eslintcache
+
+# Vite output. Both frontends are built inside their Docker images
+# (`npm run build` in the Dockerfile), so a committed dist/ would only ever be
+# stale relative to src/.
+frontend-dashboard/dist/
+frontend-pwa/dist/
+
+# ── Secrets and local config ──────────────────────────────────────────────
+# app/config.py ships dev defaults for jwt_secret, reporter_hash_salt and the
+# Twilio credentials. Real values arrive via .env and must never be committed:
+# reporter_hash_salt in particular is what makes the phone-number HMAC
+# irreversible, so leaking it de-anonymises every report ever filed.
+.env
+.env.*
+!.env.example
+*.local
+
+# Self-signed certificates generated at PWA container startup
+*.pem
+*.key
+*.crt
+*.csr
+
+# ── Runtime data ──────────────────────────────────────────────────────────
+# Citizen photos live in the `setu_media` Docker volume, not the tree — but
+# catch them if a bind mount is ever used instead.
+/data/
+backend/data/
+media/
+
+# Postgres data if anyone switches db_data to a bind mount
+pgdata/
+db_data/
+
+# ── OSRM (optional, deferred — see docker-compose.yml) ────────────────────
+# The Odisha extract is ~400 MB and every derived file is larger. Prepared
+# locally per the commented-out compose service; never committed.
+osrm/
+*.osm.pbf
+*.osrm
+*.osrm.*
+
+# ── Scratch output ────────────────────────────────────────────────────────
+# Command output captured during verification runs. Regenerable; not history.
+audit_*.txt
+pytest_out.txt
+*.log
+locust_*.csv
+
+# ── Editors / OS ──────────────────────────────────────────────────────────
+.vscode/*
+!.vscode/settings.json
+!.vscode/extensions.json
+.idea/
+*.swp
+*.swo
+*~
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# ── Deliberately NOT ignored ──────────────────────────────────────────────
+# frontend-dashboard/public/basemap/  (~7.9 MB: ganjam.pmtiles + glyph ranges)
+#
+# It looks like a build artifact and it is not one. The entire premise of this
+# system is that it works with the network unplugged, and regenerating the
+# basemap requires internet (see docs/BASEMAP.md). Ignoring it would mean a
+# fresh clone on demo day, in a hall with no Wi-Fi, renders a black rectangle
+# where the map should be — which is the single most visible failure available.
+#
+# 7.9 MB is well inside what git handles comfortably. If the extract ever grows
+# past ~50 MB (a larger district, or maxzoom 15+), move it to Git LFS rather
+# than dropping it from the repo.
