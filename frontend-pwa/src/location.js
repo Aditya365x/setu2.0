@@ -9,6 +9,8 @@
  * to be a dead end.
  */
 
+import { apiUrl } from './api'
+
 export const GEO_STATE = {
   LOCATING: 'locating',
   LOCKED: 'locked',
@@ -82,7 +84,7 @@ export class OutOfDistrictError extends Error {
  *  another district throws — placing that pin here would put it hundreds of
  *  kilometres from the person who typed it, which is worse than saying no. */
 export async function geocodePincode(pincode) {
-  const res = await fetch(`/api/v1/geocode/pincode/${encodeURIComponent(pincode)}`)
+  const res = await fetch(apiUrl(`/api/v1/geocode/pincode/${encodeURIComponent(pincode)}`))
   if (!res.ok) {
     let detail = null
     try {
@@ -110,7 +112,7 @@ export async function geocodePincode(pincode) {
  *  arriving and being turned away. */
 export async function nearbyShelters(lat, lng, limit = 5) {
   const res = await fetch(
-    `/api/v1/shelters/nearby?lat=${lat}&lng=${lng}&limit=${limit}`,
+    apiUrl(`/api/v1/shelters/nearby?lat=${lat}&lng=${lng}&limit=${limit}`),
   )
   if (!res.ok) throw new Error('shelters failed')
   return res.json()
@@ -120,14 +122,14 @@ export async function nearbyShelters(lat, lng, limit = 5) {
  *  Warning somebody about weather 60 km away teaches them to ignore the
  *  banner, which is the one thing a warning system cannot afford. */
 export async function alertsForLocation(lat, lng) {
-  const res = await fetch(`/api/v1/alerts/for-location?lat=${lat}&lng=${lng}`)
+  const res = await fetch(apiUrl(`/api/v1/alerts/for-location?lat=${lat}&lng=${lng}`))
   if (!res.ok) throw new Error('alerts failed')
   return res.json()
 }
 
 /** §11 — status of one report by its reference code. */
 export async function trackReport(reference) {
-  const res = await fetch(`/api/v1/reports/${encodeURIComponent(reference)}`)
+  const res = await fetch(apiUrl(`/api/v1/reports/${encodeURIComponent(reference)}`))
   if (res.status === 404) return null
   if (!res.ok) throw new Error('track failed')
   return res.json()
@@ -137,7 +139,7 @@ export async function trackReport(reference) {
  *  report so a boat is not dispatched to where somebody used to be. */
 export async function updateReportLocation(reference, lat, lng, accuracy) {
   const res = await fetch(
-    `/api/v1/reports/${encodeURIComponent(reference)}/location`,
+    apiUrl(`/api/v1/reports/${encodeURIComponent(reference)}/location`),
     {
       method: 'PATCH',
       headers: { 'Content-Type': 'application/json' },
@@ -162,7 +164,7 @@ export async function searchPlaces(q) {
   const term = (q || '').trim()
   if (term.length < 2) return []
   const res = await fetch(
-    `/api/v1/geocode/search?q=${encodeURIComponent(term)}&limit=8`,
+    apiUrl(`/api/v1/geocode/search?q=${encodeURIComponent(term)}&limit=8`),
   )
   if (!res.ok) throw new Error('search failed')
   return res.json()

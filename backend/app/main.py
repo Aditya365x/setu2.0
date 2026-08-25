@@ -6,6 +6,8 @@ reports never blocks on the solver.
 """
 
 import contextlib
+import logging
+import os
 from pathlib import Path
 
 from fastapi import FastAPI
@@ -21,6 +23,24 @@ from .routers import ingest, ivr, operations, ws
 @contextlib.asynccontextmanager
 async def lifespan(app: FastAPI):
     await apply_schema()
+
+    # SEED_ON_START exists for hosted deployments, where there is no shell to
+    # run `python -m seed.load` in before the first request arrives. Off by
+    # default: locally `make seed` is explicit and a surprise 72,000-row insert
+    # on every `docker compose up` would be unwelcome.
+    #
+    # Safe to leave on. Every seed step checks for existing rows first, so a
+    # restart is a no-op rather than a duplicate.
+    if os.getenv("SEED_ON_START", "").lower() in ("1", "true", "yes"):
+        try:
+            from seed.load import main as seed_main
+
+            await seed_main()
+        except Exception:
+            # A failed seed must not stop the API booting. An empty board is
+            # recoverable by hand; a container that will not start is not.
+            logging.getLogger("setu").exception("seed on start failed; continuing")
+
     yield
     await engine.dispose()
 

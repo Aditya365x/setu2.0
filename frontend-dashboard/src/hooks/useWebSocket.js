@@ -1,5 +1,6 @@
 import { useEffect, useRef } from 'react'
 import { useStore } from '../store'
+import { wsUrl } from '../api'
 
 const MIN_BACKOFF = 1000
 const MAX_BACKOFF = 30000
@@ -28,10 +29,7 @@ export function useWebSocket() {
       if (closed.current) return
       setConnection('connecting')
 
-      const proto = window.location.protocol === 'https:' ? 'wss' : 'ws'
-      const ws = new WebSocket(
-        `${proto}://${window.location.host}/api/v1/ws?district_id=${districtId}`,
-      )
+      const ws = new WebSocket(wsUrl(`/api/v1/ws?district_id=${districtId}`))
       socket.current = ws
 
       ws.onopen = () => {

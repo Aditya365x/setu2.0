@@ -34,9 +34,10 @@
 
 import { useEffect, useRef, useState } from 'react'
 import 'maplibre-gl/dist/maplibre-gl.css'
+import { basemapUrl } from './api'
 
-const BASEMAP_URL = `pmtiles://${new URL('/basemap/east_coast.pmtiles', window.location.href).href}`
-const GLYPHS_URL = '/basemap/fonts/{fontstack}/{range}.pbf'
+const BASEMAP_URL = `pmtiles://${new URL(basemapUrl('/basemap/east_coast.pmtiles'), window.location.href).href}`
+const GLYPHS_URL = basemapUrl('/basemap/fonts/{fontstack}/{range}.pbf')
 const GROUND = '#0d1117'
 
 /** Great-circle distance and initial bearing — enough to orient someone. */
@@ -110,7 +111,7 @@ export default function ShelterMap({ shelter, origin, onClose, t }) {
       // survivable; losing the two pins is not.
       let hasBasemap = true
       try {
-        const res = await fetch('/basemap/east_coast.pmtiles', {
+        const res = await fetch(basemapUrl('/basemap/east_coast.pmtiles'), {
           headers: { Range: 'bytes=0-16383' },
         })
         if (res.status !== 206) throw new Error(String(res.status))

@@ -10,6 +10,8 @@
  * their report is safe, and only then attempt the network. Never the reverse.
  */
 
+import { apiUrl } from './api'
+
 const DB_NAME = 'setu'
 const DB_VERSION = 1
 const STORE = 'outbox'
@@ -107,7 +109,7 @@ export async function send(record) {
 
   let res
   try {
-    res = await fetch('/api/v1/ingest/report', {
+    res = await fetch(apiUrl('/api/v1/ingest/report'), {
       method: 'POST',
       body: toFormData(record),
       signal: abort.signal,

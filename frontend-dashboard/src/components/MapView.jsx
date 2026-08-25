@@ -4,6 +4,7 @@ import 'maplibre-gl/dist/maplibre-gl.css'
 import { Protocol } from 'pmtiles'
 import themeLayers from 'protomaps-themes-base'
 import { useStore } from '../store'
+import { apiUrl } from '../api'
 
 // PMTiles serves a whole tile pyramid out of ONE file over HTTP range requests,
 // so the basemap is a static asset next to the bundle — no tile server, no API
@@ -320,7 +321,7 @@ export default function MapView() {
 
       // Frame the district once we know its actual shape.
       try {
-        const res = await fetch(`/api/v1/district?district_id=${useStore.getState().districtId}`)
+        const res = await fetch(apiUrl(`/api/v1/district?district_id=${useStore.getState().districtId}`))
         if (res.ok) {
           const district = await res.json()
           m.getSource('district').setData({
@@ -359,7 +360,7 @@ export default function MapView() {
     let cancelled = false
     ;(async () => {
       try {
-        const res = await fetch(`/api/v1/district?district_id=${districtId}`)
+        const res = await fetch(apiUrl(`/api/v1/district?district_id=${districtId}`))
         if (!res.ok || cancelled) return
         const district = await res.json()
         const m = map.current

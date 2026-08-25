@@ -1,6 +1,9 @@
 import { create } from "zustand";
 
-const API = "/api/v1";
+import { apiUrl } from "./api";
+
+// Resolved at build time: relative behind nginx, absolute when deployed.
+const API = apiUrl("/api/v1");
 
 async function getJSON(path) {
   const res = await fetch(`${API}${path}`);

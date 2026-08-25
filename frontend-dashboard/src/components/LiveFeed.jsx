@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { useStore } from '../store'
+import { apiUrl } from '../api'
 
 /**
  * The corridor feed: what is happening in every district, scrolling.
@@ -170,7 +171,7 @@ export default function LiveFeed() {
     const load = async () => {
       setLoading(true)
       try {
-        const res = await fetch('/api/v1/conditions')
+        const res = await fetch(apiUrl('/api/v1/conditions'))
         if (!res.ok) throw new Error(String(res.status))
         const data = await res.json()
         if (!cancelled) {
