@@ -15,8 +15,12 @@ export function useWebSocket() {
   const backoff = useRef(MIN_BACKOFF)
   const socket = useRef(null)
   const closed = useRef(false)
+  // Re-subscribe when the operator switches district, or the map keeps
+  // receiving another district's events.
+  const districtId = useStore((s) => s.districtId)
 
   useEffect(() => {
+    closed.current = false
     const { applyEvent, resync, setConnection } = useStore.getState()
     let timer = null
 
@@ -25,7 +29,9 @@ export function useWebSocket() {
       setConnection('connecting')
 
       const proto = window.location.protocol === 'https:' ? 'wss' : 'ws'
-      const ws = new WebSocket(`${proto}://${window.location.host}/api/v1/ws?district_id=1`)
+      const ws = new WebSocket(
+        `${proto}://${window.location.host}/api/v1/ws?district_id=${districtId}`,
+      )
       socket.current = ws
 
       ws.onopen = () => {
@@ -69,5 +75,5 @@ export function useWebSocket() {
       if (timer) clearTimeout(timer)
       socket.current?.close()
     }
-  }, [])
+  }, [districtId])
 }

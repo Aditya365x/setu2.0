@@ -45,6 +45,22 @@ function IncidentRow({ incident, selected, onSelect, assigned }) {
           <span className="badge badge--danger">unassigned</span>
         )}
       </div>
+      {/* The citizen-facing reference codes. An incident is a CLUSTER of
+          reports, so it carries several — and when somebody rings the control
+          room quoting theirs, the operator has to be able to find this row by
+          it. Anonymous rows make that impossible. */}
+      {incident.reference_codes?.length > 0 && (
+        <div className="incident__refs">
+          {incident.reference_codes.slice(0, 3).map((code) => (
+            <span key={code} className="refcode">{code}</span>
+          ))}
+          {incident.reference_codes.length > 3 && (
+            <span className="incident__refmore">
+              +{incident.reference_codes.length - 3}
+            </span>
+          )}
+        </div>
+      )}
       <div className="incident__meta">
         {incident.report_count} report{incident.report_count === 1 ? '' : 's'} ·{' '}
         {incident.people_affected_est} people

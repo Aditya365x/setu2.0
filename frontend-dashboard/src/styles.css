@@ -86,9 +86,6 @@ button.linkish { background: none; border: none; color: var(--muted); padding: 0
 .tile--good .tile__value { color: var(--good); }
 .tile--danger .tile__value { color: var(--danger); }
 
-.toggle { display: flex; border: 1px solid var(--line); border-radius: 6px; overflow: hidden; }
-.toggle button { border: none; border-radius: 0; background: transparent; padding: 7px 14px; }
-.toggle button.is-active { background: var(--accent); color: #04222a; font-weight: 650; }
 
 /* ── stage ───────────────────────────────────────────────────────────── */
 .stage {
@@ -345,3 +342,128 @@ code { background: var(--panel-2); padding: 1px 5px; border-radius: 4px; }
   font-family: ui-monospace, Menlo, monospace;
   font-size: 0.72rem; letter-spacing: 0.08em;
 }
+
+/* ── evacuation legs: committable, with live bed counts ─────────────────── */
+.evac__leg { padding: 7px 0; border-bottom: 1px solid #16202b; }
+.evac__line { font-size: 0.85rem; color: #d7e2ee; }
+.evac__meta {
+  display: flex; justify-content: space-between; align-items: center;
+  margin-top: 5px; font-size: 0.75rem;
+}
+.primary--sm { padding: 4px 10px !important; font-size: 0.75rem !important; }
+.evac__done { color: #4ade80; font-weight: 600; letter-spacing: 0.04em; }
+
+/* ── district picker ────────────────────────────────────────────────────── */
+.dpick { display: inline-flex; align-items: center; gap: 6px; margin-left: 10px; }
+.dpick__label {
+  font-size: 0.66rem; text-transform: uppercase; letter-spacing: 0.08em;
+  color: #6b8199;
+}
+.dpick__select {
+  padding: 5px 8px; max-width: 230px;
+  border: 1px solid #2b3a4a; border-radius: 6px;
+  background: #131b24; color: #d7e2ee; font-size: 0.82rem; cursor: pointer;
+}
+.dpick__select:focus { outline: 1px solid #2f80ed; }
+.dpick__state {
+  font-size: 0.66rem; color: #6b8199;
+  text-transform: uppercase; letter-spacing: 0.06em;
+}
+
+/* ── relief supply need vs delivered ────────────────────────────────────── */
+.supneed {
+  display: flex; justify-content: space-between; align-items: baseline;
+  padding: 4px 0; font-size: 0.83rem; color: #d7e2ee;
+}
+.supneed strong { color: #fbbf24; }
+
+/* Reference codes on the queue row — the handle a caller quotes. */
+.incident__refs { display: flex; flex-wrap: wrap; gap: 4px; margin: 4px 0 2px; }
+.incident__refmore { color: #6b8199; font-size: 0.7rem; align-self: center; }
+
+/* ── corridor feed: a scrolling drawer of every district's state ─────────── */
+.feedbtn {
+  margin-left: 10px; padding: 6px 11px;
+  border: 1px solid #2b3a4a; border-radius: 6px;
+  background: #131b24; color: #9fb3c8;
+  font-size: 0.8rem; cursor: pointer; white-space: nowrap;
+}
+.feedbtn.has-alerts { border-color: #b45309; color: #fbbf24; }
+.feedbtn__count {
+  margin-left: 6px; padding: 1px 6px; border-radius: 999px;
+  background: #b45309; color: #fff; font-size: 0.7rem; font-weight: 700;
+}
+
+.feed {
+  position: fixed; top: 0; right: 0; bottom: 0; z-index: 60;
+  width: 380px; max-width: 92vw;
+  display: flex; flex-direction: column;
+  background: #0b1118; border-left: 1px solid #24303d;
+  box-shadow: -18px 0 44px rgba(0,0,0,0.55);
+  transform: translateX(100%);
+  transition: transform 220ms ease;
+}
+.feed.is-open { transform: translateX(0); }
+
+.feed__head {
+  display: flex; justify-content: space-between; align-items: flex-start;
+  padding: 14px 14px 10px; border-bottom: 1px solid #1c2733;
+}
+.feed__head h2 { margin: 0; font-size: 0.95rem; }
+.feed__sub { margin: 3px 0 0; font-size: 0.75rem; color: #7f9bb5; }
+.feed__close {
+  border: none; background: none; color: #7f9bb5; font-size: 1rem; cursor: pointer;
+}
+.feed__err { margin: 12px 14px; color: #fca5a5; font-size: 0.83rem; }
+.feed__muted { margin: 12px 14px; color: #7f9bb5; font-size: 0.85rem; }
+
+/* The viewport clips; the track scrolls. Mask fades both edges so items
+   appear and leave rather than popping at a hard border. */
+/* A REAL scroll area, not a transformed track. The drift is JS nudging
+   scrollTop, which means wheel, touch, drag, keyboard and the scrollbar all
+   work — the previous CSS-transform version looked identical and could not be
+   scrolled at all. */
+.feed__viewport {
+  flex: 1;
+  overflow-y: auto;
+  position: relative;
+  /* Keep a wheel over the feed from scrolling the page behind it. */
+  overscroll-behavior: contain;
+  scrollbar-width: thin;
+  scrollbar-color: #2b3a4a transparent;
+  -webkit-mask-image: linear-gradient(180deg, transparent, #000 7%, #000 93%, transparent);
+          mask-image: linear-gradient(180deg, transparent, #000 7%, #000 93%, transparent);
+}
+.feed__viewport:focus-visible { outline: 1px solid #2f80ed; outline-offset: -2px; }
+.feed__viewport::-webkit-scrollbar { width: 8px; }
+.feed__viewport::-webkit-scrollbar-thumb {
+  background: #2b3a4a; border-radius: 4px;
+}
+.feed__track { display: flex; flex-direction: column; gap: 8px; padding: 10px; }
+
+
+.feeditem {
+  display: block; width: 100%; text-align: left;
+  padding: 9px 11px; border-radius: 9px; cursor: pointer;
+  background: #111a23; border: 1px solid #1c2733; border-left-width: 3px;
+  color: #d7e2ee;
+}
+.feeditem:hover { background: #16212c; }
+.feeditem--danger  { border-left-color: #ef4444; }
+.feeditem--warning { border-left-color: #f59e0b; }
+.feeditem--watch   { border-left-color: #38bdf8; }
+.feeditem--calm    { border-left-color: #334155; opacity: 0.72; }
+
+.feeditem__top { display: flex; align-items: baseline; gap: 7px; margin-bottom: 4px; }
+.feeditem__kind {
+  font-size: 0.6rem; letter-spacing: 0.09em; font-weight: 700;
+  padding: 1px 5px; border-radius: 3px; background: #1e293b; color: #94a3b8;
+}
+.feeditem__kind--danger  { background: #7f1d1d; color: #fecaca; }
+.feeditem__kind--warning { background: #78350f; color: #fde68a; }
+.feeditem__kind--watch   { background: #0c4a6e; color: #bae6fd; }
+.feeditem__district { font-size: 0.82rem; font-weight: 600; }
+.feeditem__state { margin-left: auto; font-size: 0.65rem; color: #64748b; }
+.feeditem__headline { font-size: 0.88rem; }
+.feeditem__detail { margin-top: 3px; font-size: 0.74rem; color: #7f9bb5; line-height: 1.35; }
+

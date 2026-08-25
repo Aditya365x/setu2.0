@@ -136,14 +136,93 @@ export default function DetailPanel() {
         </p>
       )}
 
+      {/* §"relief supplies" — the second allocation problem. Rescue is solved by
+          Hungarian assignment above; this is min-cost flow over truck stock.
+          The outstanding need is shown next to the plan so an operator can see
+          whether the plan actually closes the gap. */}
+      {detail.supply_need &&
+        (detail.supply_need.water_l > 0 ||
+          detail.supply_need.food_kg > 0 ||
+          detail.supply_plan?.length > 0) && (
+          <>
+            <div className="panel__subtitle">Relief supplies</div>
+            <div className="supneed">
+              <span>
+                Water <strong>{detail.supply_need.water_l.toLocaleString()} L</strong> needed
+              </span>
+              <span className="muted">
+                {detail.supply_need.water_delivered_l.toLocaleString()} L delivered
+              </span>
+            </div>
+            <div className="supneed">
+              <span>
+                Food <strong>{detail.supply_need.food_kg.toLocaleString()} kg</strong> needed
+              </span>
+              <span className="muted">
+                {detail.supply_need.food_delivered_kg.toLocaleString()} kg delivered
+              </span>
+            </div>
+            <ul className="evac">
+              {detail.supply_plan?.map((leg) => (
+                <li key={leg.id} className="evac__leg">
+                  <div className="evac__line">
+                    <strong>
+                      {leg.water_l ? `${leg.water_l} L water` : `${leg.food_kg} kg food`}
+                    </strong>{' '}
+                    ← {leg.resource_name}{' '}
+                    <span className="muted">({Math.round(leg.eta_seconds / 60)} min)</span>
+                  </div>
+                  <div className="evac__meta">
+                    <span className="muted">
+                      on truck: {leg.stock_water_l?.toLocaleString()} L ·{' '}
+                      {leg.stock_food_kg?.toLocaleString()} kg
+                    </span>
+                    {leg.status === 'committed' ? (
+                      <span className="evac__done">delivered ✓</span>
+                    ) : (
+                      <button
+                        className="primary primary--sm"
+                        onClick={() => commitAssignment(leg.id)}
+                      >
+                        Dispatch
+                      </button>
+                    )}
+                  </div>
+                </li>
+              ))}
+            </ul>
+          </>
+        )}
+
       {detail.evacuation_plan?.length > 0 && (
         <>
           <div className="panel__subtitle">Evacuation plan</div>
+          {/* Committing an evacuation is what actually moves people into a
+              shelter and draws down its beds. Without this control the
+              min-cost flow produced a plan nobody could action, so shelter
+              occupancy sat at zero no matter what the operator did. */}
           <ul className="evac">
             {detail.evacuation_plan.map((leg) => (
-              <li key={`${leg.shelter_id}`}>
-                <strong>{leg.people}</strong> → {leg.shelter_name}{' '}
-                <span className="muted">({Math.round(leg.eta_seconds / 60)} min)</span>
+              <li key={leg.id ?? leg.shelter_id} className="evac__leg">
+                <div className="evac__line">
+                  <strong>{leg.people}</strong> → {leg.shelter_name}{' '}
+                  <span className="muted">({Math.round(leg.eta_seconds / 60)} min)</span>
+                </div>
+                <div className="evac__meta">
+                  <span className="muted">
+                    {leg.beds_free} of {leg.capacity_total} beds free
+                  </span>
+                  {leg.status === 'committed' ? (
+                    <span className="evac__done">placed ✓</span>
+                  ) : (
+                    <button
+                      className="primary primary--sm"
+                      onClick={() => commitAssignment(leg.id)}
+                    >
+                      Place {leg.people}
+                    </button>
+                  )}
+                </div>
               </li>
             ))}
           </ul>

@@ -10,8 +10,18 @@
  * cyclone has no way to tell "loading" from "broken".
  */
 
-import { useEffect, useState } from 'react'
-import { alertsForLocation, nearbyShelters, trackReport } from './location'
+import { Suspense, lazy, useEffect, useState } from 'react'
+import {
+  OutOfDistrictError,
+  alertsForLocation,
+  geocodePincode,
+  nearbyShelters,
+  trackReport,
+} from './location'
+
+// Loaded only when a shelter map is opened. MapLibre is ~220 kB gzipped and
+// the report form must never wait on it.
+const ShelterMap = lazy(() => import('./ShelterMap'))
 
 export function BackBar({ title, onBack, t }) {
   return (
@@ -145,24 +155,113 @@ const SHELTER_LABEL = {
 export function SheltersScreen({ t, onBack, position }) {
   const [shelters, setShelters] = useState(null)
   const [failed, setFailed] = useState(false)
+  // "Nearby" is meaningless without a point to measure from, and this screen
+  // used to dead-end with "your location is needed" and no way to supply one.
+  // Someone evacuating with GPS off must still be able to find a shelter, so
+  // the same PIN-code fallback the report form uses is available here.
+  const [manual, setManual] = useState(null)
+  const [mapFor, setMapFor] = useState(null)
+  const [pin, setPin] = useState('')
+  const [pinError, setPinError] = useState(null)
+  const [resolving, setResolving] = useState(false)
+
+  const origin = manual || position
+
+  const usePin = async () => {
+    if (pin.trim().length < 6) return
+    setResolving(true)
+    setPinError(null)
+    try {
+      setManual(await geocodePincode(pin.trim()))
+    } catch (err) {
+      setPinError(
+        err instanceof OutOfDistrictError ? err.message : t.pincodeFailed,
+      )
+    }
+    setResolving(false)
+  }
 
   useEffect(() => {
-    if (!position) return
-    nearbyShelters(position.lat, position.lng, 6)
+    if (!origin) return
+    setFailed(false)
+    nearbyShelters(origin.lat, origin.lng, 6)
       .then(setShelters)
       .catch(() => setFailed(true))
-  }, [position])
+  }, [origin])
+
+  if (mapFor) {
+    return (
+      <Suspense fallback={<div className="screen"><p className="muted">{t.loadingMap}</p></div>}>
+        <ShelterMap
+          shelter={mapFor}
+          origin={origin}
+          onClose={() => setMapFor(null)}
+          t={t}
+        />
+      </Suspense>
+    )
+  }
 
   return (
     <div className="screen">
       <BackBar title={t.sheltersTitle} onBack={onBack} t={t} />
-      {!position && <p className="muted">{t.needLocationFirst}</p>}
-      {failed && <p className="fallback__error">{t.noAlerts}</p>}
-      {shelters && (
+
+      {/* Always say WHERE these distances are measured from. A list of
+          "nearby" shelters with no stated origin is not trustworthy — the
+          reader cannot tell whether it knows where they are. */}
+      {origin ? (
+        <p className="muted">
+          {t.distancesFrom}{' '}
+          {origin.name || `${origin.lat.toFixed(4)}, ${origin.lng.toFixed(4)}`}
+          {origin.accuracy ? ` (±${origin.accuracy >= 1000
+            ? `${(origin.accuracy / 1000).toFixed(1)} km`
+            : `${Math.round(origin.accuracy)} m`})` : ''}
+        </p>
+      ) : (
+        <p className="muted">{t.needLocationFirst}</p>
+      )}
+
+      <div className="fallback__row">
+        <input
+          className="field"
+          type="text"
+          inputMode="numeric"
+          maxLength={6}
+          value={pin}
+          onChange={(e) => {
+            setPin(e.target.value.replace(/\D/g, ''))
+            setPinError(null)
+          }}
+          placeholder={t.pincodePlaceholder}
+        />
+        <button onClick={usePin} disabled={pin.length < 6 || resolving}>
+          {resolving ? '…' : t.usePincode}
+        </button>
+      </div>
+      {pinError && <p className="fallback__error">{pinError}</p>}
+
+      {failed && <p className="fallback__error">{t.pincodeFailed}</p>}
+      {shelters && shelters.length === 0 && (
+        <p className="fallback__error">{t.noSheltersNear}</p>
+      )}
+      {shelters && shelters.length > 0 && (
         <ul className="list">
           {shelters.map((s) => (
             <li key={s.id} className={`shelter shelter--${s.occupancy_label}`}>
-              <div className="shelter__name">{s.name}</div>
+              <div className="shelter__top">
+                <div className="shelter__name">{s.name}</div>
+                {/* Opens the offline map with a bearing line from here to
+                    there, and a hand-off to the phone's maps app for
+                    turn-by-turn when there is a network. */}
+                <button
+                  className="shelter__map"
+                  onClick={() => setMapFor(s)}
+                  aria-label={`${t.showOnMap}: ${s.name}`}
+                  title={t.showOnMap}
+                >
+                  🗺️
+                </button>
+              </div>
               <div className="shelter__meta">
                 <span>{s.distance_km} km</span>
                 <span className="shelter__state">
@@ -172,6 +271,15 @@ export function SheltersScreen({ t, onBack, position }) {
               <div className="shelter__beds">
                 {t.shelterBeds(s.available)} · {s.available}/{s.capacity_total}
               </div>
+              {/* Near a border the nearest shelter is routinely in the next
+                  district — sometimes the next state. Say so here rather than
+                  letting somebody discover it on arrival. */}
+              {s.district_name && (
+                <div className="shelter__where">
+                  {s.district_name}
+                  {s.state ? ` · ${s.state}` : ''}
+                </div>
+              )}
             </li>
           ))}
         </ul>

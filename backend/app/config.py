@@ -22,9 +22,20 @@ class Settings(BaseSettings):
     # ── external feeds ────────────────────────────────────────────────────
     cap_endpoint: str = "https://sachet.ndma.gov.in/cap_public_website/rss/rss_india.xml"
     cap_poll_seconds: int = 60
-    weather_fallback_url: str = "https://api.open-meteo.com/v1/forecast"
-    # OFFLINE_MODE=true -> serve only fixtures/, zero egress. The demo default.
+    # OFFLINE_MODE=true -> CAP is read from fixtures/, zero egress. The demo
+    # default, because the alert path HAS a recorded fixture to fall back on.
     offline_mode: bool = True
+
+    # Live conditions are a separate switch, deliberately.
+    #
+    # Tying them to OFFLINE_MODE was wrong: CAP has a fixture to serve when the
+    # network is gone, and the conditions panel does not. Sharing one flag meant
+    # the panel showed nothing at all in the demo default, which is not a
+    # degraded reading — it is no feature. It now always tries live, falls back
+    # to the last good cached reading, and only then says it does not know.
+    # Nothing on screen ever blocks on it.
+    live_conditions: bool = True
+    conditions_endpoint: str = "https://api.open-meteo.com/v1/forecast"
 
     # ── tenancy ───────────────────────────────────────────────────────────
     district_id: int = 1

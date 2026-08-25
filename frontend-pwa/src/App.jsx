@@ -1,6 +1,12 @@
 import { useEffect, useMemo, useState } from 'react'
 import * as outbox from './outbox'
-import { GEO_STATE, OutOfDistrictError, geocodePincode, watchLocation } from './location'
+import {
+  GEO_STATE,
+  OutOfDistrictError,
+  geocodePincode,
+  searchPlaces,
+  watchLocation,
+} from './location'
 import { STRINGS } from './i18n'
 import {
   AlertsScreen,
@@ -43,10 +49,20 @@ export default function App() {
   const [geoState, setGeoState] = useState(GEO_STATE.LOCATING)
   const [pincode, setPincode] = useState('')
   const [pincodeError, setPincodeError] = useState(null)
+  // Typed place name — the third route to a location, for a phone with no fix
+  // and a reporter who does not know their PIN code.
+  const [placeQuery, setPlaceQuery] = useState('')
+  const [placeResults, setPlaceResults] = useState([])
+  const [searching, setSearching] = useState(false)
   // §4.1 — the app opens on a menu, not on the form. REPORT EMERGENCY is still
   // one tap from launch; the other four are things people look for when they
   // are not the one in trouble.
-  const [view, setView] = useState('home')
+  // Hash routing. Cheap, and it buys three things that matter on a phone: the
+  // hardware back button leaves a sub-screen instead of closing the app, a QR
+  // code can point straight at #report, and a screen is linkable for support.
+  const [view, setView] = useState(
+    () => (window.location.hash || '#home').slice(1).split('?')[0] || 'home',
+  )
   const [vulnerable, setVulnerable] = useState({})
   // Bumped by the "Use my GPS" button to restart the watcher. A first attempt
   // that timed out indoors very often succeeds on a second try by a window.
@@ -100,6 +116,59 @@ export default function App() {
       )
     }
     setResolving(false)
+  }
+
+  // Keep the URL and the view in step, both directions.
+  useEffect(() => {
+    if ((window.location.hash || '#home').slice(1) !== view) {
+      window.history.replaceState(null, '', `#${view}`)
+    }
+  }, [view])
+
+  useEffect(() => {
+    const onHash = () =>
+      setView((window.location.hash || '#home').slice(1).split('?')[0] || 'home')
+    window.addEventListener('hashchange', onHash)
+    return () => window.removeEventListener('hashchange', onHash)
+  }, [])
+
+  // Debounced place search. 250 ms is long enough that a typist does not fire a
+  // request per keystroke, and short enough that it feels immediate.
+  useEffect(() => {
+    const term = placeQuery.trim()
+    if (term.length < 2) {
+      setPlaceResults([])
+      return
+    }
+    let cancelled = false
+    setSearching(true)
+    const id = setTimeout(async () => {
+      try {
+        const found = await searchPlaces(term)
+        if (!cancelled) setPlaceResults(found)
+      } catch {
+        if (!cancelled) setPlaceResults([])
+      } finally {
+        if (!cancelled) setSearching(false)
+      }
+    }, 250)
+    return () => {
+      cancelled = true
+      clearTimeout(id)
+    }
+  }, [placeQuery])
+
+  const usePlace = (place) => {
+    setPosition({
+      lat: place.lat,
+      lng: place.lng,
+      accuracy: place.accuracy_m,
+      name: place.label,
+      source: 'place',
+    })
+    setPlaceQuery('')
+    setPlaceResults([])
+    setPincodeError(null)
   }
 
   useEffect(() => {
@@ -432,6 +501,38 @@ export default function App() {
               ? t.gpsRefresh
               : t.useGps}
         </button>
+
+        <div className="loc__or">{t.orTypePlace}</div>
+
+        {/* Typed place name. Deliberately above the PIN code: far more people
+            know the name of their village than its six-digit code. */}
+        <input
+          className="field"
+          type="text"
+          value={placeQuery}
+          onChange={(e) => setPlaceQuery(e.target.value)}
+          placeholder={t.placePlaceholder}
+          autoComplete="off"
+        />
+        {searching && <p className="muted loc__hint">{t.searching}</p>}
+        {placeResults.length > 0 && (
+          <ul className="places">
+            {placeResults.map((p) => (
+              <li key={`${p.kind}-${p.name}-${p.district_id}`}>
+                <button className="places__row" onClick={() => usePlace(p)}>
+                  <span className="places__name">{p.name}</span>
+                  <span className="places__where">
+                    {p.district_name}, {p.state}
+                    {p.kind === 'shelter' ? ' · shelter' : ''}
+                  </span>
+                </button>
+              </li>
+            ))}
+          </ul>
+        )}
+        {placeQuery.trim().length >= 2 && !searching && placeResults.length === 0 && (
+          <p className="muted loc__hint">{t.noPlaceFound}</p>
+        )}
 
         <div className="loc__or">{t.orUsePin}</div>
 

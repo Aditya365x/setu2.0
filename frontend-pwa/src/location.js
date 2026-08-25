@@ -147,3 +147,23 @@ export async function updateReportLocation(reference, lat, lng, accuracy) {
   if (!res.ok) throw new Error('location update failed')
   return res.json()
 }
+
+/** Type where you are.
+ *
+ *  The third way into a location, after GPS and a PIN code, and the one that
+ *  works when neither of those does: no satellite fix, and no idea what the
+ *  local PIN code is. Somebody can still type the name of their village or the
+ *  school they are sheltering behind.
+ *
+ *  Searched against SETU's own gazetteer, not an external geocoder — it works
+ *  with no internet, and it cannot return a match outside the covered corridor.
+ */
+export async function searchPlaces(q) {
+  const term = (q || '').trim()
+  if (term.length < 2) return []
+  const res = await fetch(
+    `/api/v1/geocode/search?q=${encodeURIComponent(term)}&limit=8`,
+  )
+  if (!res.ok) throw new Error('search failed')
+  return res.json()
+}

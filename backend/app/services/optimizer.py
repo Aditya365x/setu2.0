@@ -22,10 +22,11 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from ..bus import publish, redis
 from ..config import settings
-from .assignment import evaluate, solve
+from .assignment import compare, evaluate, solve
 from .clustering import cluster_and_score
 from .routing import eta_matrix
 from .shelters import allocate_shelters
+from .supplies import SupplyDepotView, allocate_supplies
 from .types import IncidentView, ResourceView, ShelterView
 
 CRITICAL_THRESHOLD = 70.0
@@ -45,8 +46,25 @@ FREE_RESOURCES_SQL = text(
     """
 )
 
-# The 50 km spatial pre-filter keeps the matrix small and the O(n^3) term
-# harmless. Beyond that, the district itself is the natural shard.
+# EVERY open incident enters the solver. No exceptions, no pre-filter.
+#
+# There used to be a 50 km spatial pre-filter here, justified as keeping the
+# matrix small and the O(n^3) term harmless. What it actually did was silently
+# delete incidents from the problem: an incident with no unit within 50 km was
+# dropped before the solver ever saw it, so it sat on the board forever with no
+# recommendation, no error, and an SLA clock ticking past breach. The operator
+# had no way to distinguish "nothing can help this" from "the system never
+# looked".
+#
+# The performance argument does not survive contact with the numbers. A
+# district runs ~40 units against tens of incidents; the full matrix is a few
+# thousand cells and `linear_sum_assignment` solves it in single-digit
+# milliseconds. We were trading correctness for nothing.
+#
+# Distance now costs what it should: a far unit is expensive in the cost matrix
+# and loses to a near one, but it is never ineligible. If the only boat is two
+# hours away, two hours away is the answer — and the operator can see it and
+# decide.
 OPEN_INCIDENTS_SQL = text(
     """
     SELECT i.id, i.hazard_type::text AS hazard_type, i.severity_score,
@@ -56,12 +74,36 @@ OPEN_INCIDENTS_SQL = text(
     FROM incidents i
     WHERE i.district_id = :did
       AND i.status IN ('open','assigned')
-      AND EXISTS (
-          SELECT 1 FROM resources r
-          WHERE r.district_id = i.district_id
-            AND ST_DWithin(r.current_geom, i.centroid, :radius_m)
-      )
     ORDER BY i.severity_score DESC
+    """
+)
+
+# Supply-carrying resources and what is actually on them. A truck with an empty
+# tank is not relief capacity, so stock travels with the row rather than being
+# assumed from the vehicle type.
+SUPPLY_DEPOTS_SQL = text(
+    """
+    SELECT id, name, status,
+           COALESCE(stock_water_l, 0) AS stock_water_l,
+           COALESCE(stock_food_kg, 0) AS stock_food_kg,
+           ST_Y(current_geom::geometry) AS lat,
+           ST_X(current_geom::geometry) AS lng
+    FROM resources
+    WHERE district_id = :did
+      AND 'supply' = ANY(capabilities)
+      AND status IN ('idle','returning')
+    """
+)
+
+# What has already reached each incident, so a second cycle plans the remainder
+# instead of re-sending relief that has arrived.
+DELIVERED_SQL = text(
+    """
+    SELECT id,
+           COALESCE(water_delivered_l, 0) AS water_l,
+           COALESCE(food_delivered_kg, 0) AS food_kg
+    FROM incidents
+    WHERE district_id = :did AND status IN ('open','assigned')
     """
 )
 
@@ -152,10 +194,7 @@ async def optimization_cycle(session: AsyncSession, district_id: int) -> dict[st
         )
         incidents = _incident_views(
             (
-                await session.execute(
-                    OPEN_INCIDENTS_SQL,
-                    {"did": district_id, "radius_m": settings.spatial_prefilter_km * 1000},
-                )
+                await session.execute(OPEN_INCIDENTS_SQL, {"did": district_id})
             ).mappings().all()
         )
 
@@ -172,6 +211,12 @@ async def optimization_cycle(session: AsyncSession, district_id: int) -> dict[st
 
         opt = evaluate(opt_pairs, incidents, eta, CRITICAL_THRESHOLD)
         grd = evaluate(greedy_pairs, incidents, eta, CRITICAL_THRESHOLD)
+        # Head to head on the incidents both plans serve. See compare(): the
+        # per-strategy means are not comparable to each other.
+        head_to_head = compare(opt_pairs, greedy_pairs, eta)
+        opt["mean_common_min"] = head_to_head["mean_common_opt"]
+        grd["mean_common_min"] = head_to_head["mean_common_greedy"]
+        opt["differing_assignments"] = head_to_head["differing_assignments"]
 
         # Supersede the previous proposal set; committed rows are untouched,
         # which is what makes commitment locking hold across runs.
@@ -219,6 +264,60 @@ async def optimization_cycle(session: AsyncSession, district_id: int) -> dict[st
                     },
                 )
 
+        # ── relief supplies ───────────────────────────────────────────────
+        # Rescue is solved above by Hungarian assignment. Relief is a
+        # capacitated transportation problem and is solved here by min-cost
+        # flow — the same solver the shelters use, because it is the same shape.
+        supply = {"water_planned_l": 0, "food_planned_kg": 0,
+                  "water_unmet_l": 0, "food_unmet_kg": 0}
+        depots = [
+            SupplyDepotView(
+                id=r["id"], name=r["name"],
+                lat=float(r["lat"]), lng=float(r["lng"]),
+                stock_water_l=int(r["stock_water_l"]),
+                stock_food_kg=int(r["stock_food_kg"]),
+                status=r["status"],
+            )
+            for r in (
+                await session.execute(SUPPLY_DEPOTS_SQL, {"did": district_id})
+            ).mappings().all()
+        ]
+        if depots:
+            delivered = {
+                r["id"]: (int(r["water_l"]), int(r["food_kg"]))
+                for r in (
+                    await session.execute(DELIVERED_SQL, {"did": district_id})
+                ).mappings().all()
+            }
+            eta_di, _ = await eta_matrix(depots, incidents)
+            supply = allocate_supplies(incidents, depots, eta_di, delivered)
+
+            await session.execute(
+                text(
+                    "UPDATE assignments SET status = 'cancelled' "
+                    "WHERE district_id = :did AND status = 'proposed' AND kind = 'supply'"
+                ),
+                {"did": district_id},
+            )
+            for d in supply["deliveries"]:
+                await session.execute(
+                    text(
+                        """
+                        INSERT INTO assignments (district_id, incident_id, resource_id, kind,
+                                                 eta_seconds, water_l, food_kg,
+                                                 solver_run_id, status)
+                        VALUES (:did, :iid, :rid, 'supply', :eta, :water, :food, :run, 'proposed')
+                        """
+                    ),
+                    {
+                        "did": district_id, "iid": d["incident_id"],
+                        "rid": d["resource_id"], "eta": d["eta_seconds"],
+                        "water": d["quantity"] if d["unit"] == "water_l" else None,
+                        "food": d["quantity"] if d["unit"] == "food_kg" else None,
+                        "run": str(run_id),
+                    },
+                )
+
         cycle_ms = int((time.perf_counter() - started) * 1000)
 
         await session.execute(
@@ -228,9 +327,10 @@ async def optimization_cycle(session: AsyncSession, district_id: int) -> dict[st
                     mean_response_opt, mean_response_greedy, worst_case_opt,
                     worst_case_greedy, unassigned_critical_opt,
                     unassigned_critical_greedy, served_opt, served_greedy,
-                    total_response_opt, total_response_greedy, cycle_ms, degraded_eta)
+                    total_response_opt, total_response_greedy, cycle_ms, degraded_eta,
+                    mean_common_opt, mean_common_greedy, common_incidents)
                 VALUES (:id, :did, :ni, :nr, :mo, :mg, :wo, :wg, :uo, :ug,
-                        :so, :sg, :to, :tg, :ms, :deg)
+                        :so, :sg, :to, :tg, :ms, :deg, :mco, :mcg, :nc)
                 """
             ),
             {
@@ -242,6 +342,9 @@ async def optimization_cycle(session: AsyncSession, district_id: int) -> dict[st
                 "so": opt["assigned"], "sg": grd["assigned"],
                 "to": opt["total_response_min"], "tg": grd["total_response_min"],
                 "ms": cycle_ms, "deg": degraded,
+                "mco": head_to_head["mean_common_opt"],
+                "mcg": head_to_head["mean_common_greedy"],
+                "nc": head_to_head["common_incidents"],
             },
         )
         await session.commit()
@@ -253,12 +356,28 @@ async def optimization_cycle(session: AsyncSession, district_id: int) -> dict[st
             "optimized": opt,
             "greedy": grd,
             "shelter_shortfall": shortfall,
+            "supply": supply,
             "cycle_ms": cycle_ms,
             "degraded_eta": degraded,
             **cluster_stats,
         }
 
         await publish(district_id, "reoptimized", summary)
+        if supply.get("water_unmet_l", 0) > 0 or supply.get("food_unmet_kg", 0) > 0:
+            # The district cannot feed or water everyone it has open right now.
+            # Like the shelter shortfall, this is an SDMA escalation and a real
+            # operational number rather than a dashboard decoration.
+            await publish(
+                district_id, "alarm",
+                {
+                    "code": "RELIEF_SUPPLY_SHORTFALL",
+                    "detail": {
+                        "water_l": supply.get("water_unmet_l", 0),
+                        "food_kg": supply.get("food_unmet_kg", 0),
+                    },
+                },
+            )
+
         if shortfall > 0:
             # The number no existing system produces: this district is short of
             # shelter capacity right now, and that is an SDMA escalation.

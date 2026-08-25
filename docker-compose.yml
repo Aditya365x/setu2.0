@@ -36,8 +36,15 @@ services:
       ROUTING_PROVIDER: ${ROUTING_PROVIDER:-haversine}
       OSRM_URL: http://osrm:5000
       SMS_PROVIDER: ${SMS_PROVIDER:-mock}
+      # Real SMS. Left empty by default so the offline demo runs on the mock
+      # gateway with no account and no egress; fill these in .env (gitignored)
+      # to put the identical messages on a real handset.
+      TWILIO_ACCOUNT_SID: ${TWILIO_ACCOUNT_SID:-}
+      TWILIO_AUTH_TOKEN: ${TWILIO_AUTH_TOKEN:-}
+      TWILIO_FROM: ${TWILIO_FROM:-}
       STORAGE_PROVIDER: ${STORAGE_PROVIDER:-local}
       OFFLINE_MODE: ${OFFLINE_MODE:-true}
+      LIVE_CONDITIONS: ${LIVE_CONDITIONS:-true}
     ports: ["8000:8000"]
     volumes:
       - media:/data/media
@@ -55,6 +62,7 @@ services:
       ROUTING_PROVIDER: ${ROUTING_PROVIDER:-haversine}
       OSRM_URL: http://osrm:5000
       OFFLINE_MODE: ${OFFLINE_MODE:-true}
+      LIVE_CONDITIONS: ${LIVE_CONDITIONS:-true}
     volumes:
       - media:/data/media
       - ./fixtures:/app/fixtures:ro

@@ -62,7 +62,7 @@ const line = (from, to, props) => ({
 // added. The symptom is a totally black map, incidents included, which reads as
 // "the map is broken" rather than "the basemap is missing". Resolved against
 // the current origin so this works on localhost, the LAN IP and HTTPS alike.
-const BASEMAP_URL = `pmtiles://${new URL('/basemap/ganjam.pmtiles', window.location.href).href}`
+const BASEMAP_URL = `pmtiles://${new URL('/basemap/east_coast.pmtiles', window.location.href).href}`
 const GLYPHS_URL = '/basemap/fonts/{fontstack}/{range}.pbf'
 
 // The theme's own background is a mid grey. Repaint it in the dashboard's
@@ -115,7 +115,7 @@ const FLAT_STYLE = {
  */
 async function chooseStyle() {
   try {
-    const res = await fetch('/basemap/ganjam.pmtiles', {
+    const res = await fetch('/basemap/east_coast.pmtiles', {
       headers: { Range: 'bytes=0-16383' },
     })
     // A 200 means the server ignored the range and would hand back the whole
@@ -320,7 +320,7 @@ export default function MapView() {
 
       // Frame the district once we know its actual shape.
       try {
-        const res = await fetch('/api/v1/district')
+        const res = await fetch(`/api/v1/district?district_id=${useStore.getState().districtId}`)
         if (res.ok) {
           const district = await res.json()
           m.getSource('district').setData({
@@ -348,6 +348,44 @@ export default function MapView() {
       cancelled = true
     }
   }, [selectIncident])
+
+  // ── reframe when the operator switches district ─────────────────────────
+  // The boundary and the camera both belong to the district, so both have to
+  // follow it. Without this the map keeps Ganjam's outline and viewport while
+  // the panels fill with Visakhapatnam's incidents.
+  const districtId = useStore((s) => s.districtId)
+  useEffect(() => {
+    if (!ready.current || !map.current) return
+    let cancelled = false
+    ;(async () => {
+      try {
+        const res = await fetch(`/api/v1/district?district_id=${districtId}`)
+        if (!res.ok || cancelled) return
+        const district = await res.json()
+        const m = map.current
+        m.getSource('district')?.setData({
+          type: 'Feature',
+          geometry: district.boundary_geojson,
+          properties: {},
+        })
+        const rings =
+          district.boundary_geojson.type === 'MultiPolygon'
+            ? district.boundary_geojson.coordinates.flat()
+            : district.boundary_geojson.coordinates
+        const coords = rings[0]
+        const bounds = coords.reduce(
+          (b, c) => b.extend(c),
+          new maplibregl.LngLatBounds(coords[0], coords[0]),
+        )
+        m.fitBounds(bounds, { padding: 40, duration: 600 })
+      } catch {
+        /* unseeded or offline — the operational layers still render */
+      }
+    })()
+    return () => {
+      cancelled = true
+    }
+  }, [districtId])
 
   // ── update via setData; never re-render the map component ────────────────
   useEffect(() => {

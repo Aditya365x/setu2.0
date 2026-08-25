@@ -10,6 +10,14 @@ class ReportAccepted(BaseModel):
     reference_code: str
     status: str
     queued_offline: bool = False
+    # Which district the report was actually filed under, resolved from its
+    # position rather than from server config. Returned so the reporter's app
+    # and the operator both know where it landed.
+    district_id: Optional[int] = None
+    # False means the point sits outside every seeded district boundary and was
+    # filed to the nearest one. Surfaced rather than hidden: a report from
+    # outside the covered corridor is accepted, but somebody should know.
+    in_district: Optional[bool] = None
 
 
 class SeverityBreakdown(BaseModel):
@@ -44,6 +52,10 @@ class Metrics(BaseModel):
     units_committed: int
     mean_response_min: dict[str, float]
     worst_case_min: dict[str, float]
+    # The like-for-like number: mean over incidents BOTH strategies served.
+    # The per-strategy means above are not comparable to each other.
+    mean_common_min: dict[str, float] = {"optimized": 0.0, "greedy": 0.0}
+    common_incidents: int = 0
     # Coverage. Reported next to mean response because greedy leaves the hard
     # incidents unassigned, so mean alone is not a like-for-like comparison.
     incidents_served: dict[str, int] = {"optimized": 0, "greedy": 0}

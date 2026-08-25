@@ -385,3 +385,60 @@ h2 { font-size: 14px; color: var(--muted); margin: 0 0 8px; font-weight: 600; }
    Reserve a button-height of dead space below the location block so the stuck
    button always hovers over empty page rather than over a control. */
 .loc { padding-bottom: 84px; }
+
+/* Which district owns this shelter — matters near a border. */
+.shelter__where {
+  margin-top: 3px;
+  color: #6b8199;
+  font-size: 0.78rem;
+}
+
+/* ── shelter map button + route view ────────────────────────────────────── */
+.shelter__top { display: flex; align-items: flex-start; gap: 10px; }
+.shelter__top .shelter__name { flex: 1; }
+.shelter__map {
+  flex-shrink: 0;
+  width: 42px; height: 42px;
+  border: 1px solid #2b3a4a; border-radius: 10px;
+  background: #12263f; font-size: 20px; line-height: 1;
+  display: grid; place-items: center;
+}
+.shelter__map:active { background: #16324f; }
+
+.smap { display: flex; flex-direction: column; height: 100dvh; padding: 12px; gap: 10px; }
+.smap__head { margin-bottom: 0; }
+.smap__facts {
+  display: flex; justify-content: space-between; align-items: baseline;
+  font-size: 0.95rem; color: #d7e2ee;
+}
+/* The map fills whatever is left. A route view that needs scrolling to see
+   the destination is not a route view. */
+.smap__canvas {
+  flex: 1; min-height: 240px;
+  border-radius: 12px; overflow: hidden; border: 1px solid #24303d;
+}
+.smap__actions { flex-shrink: 0; }
+.smap__go {
+  display: block; width: 100%; padding: 1rem;
+  border-radius: 12px; background: #1d4ed8; color: #fff;
+  font-size: 1.05rem; font-weight: 600; text-align: center; text-decoration: none;
+}
+.smap__go:active { background: #1e40af; }
+.smap__note { margin: 8px 0 0; text-align: center; font-size: 0.82rem; }
+
+/* ── typed place search ─────────────────────────────────────────────────── */
+.loc__hint { margin: 6px 0 0; font-size: 0.85rem; }
+.places {
+  list-style: none; margin: 8px 0 0; padding: 0;
+  display: grid; gap: 6px;
+  max-height: 260px; overflow-y: auto;
+}
+.places__row {
+  display: flex; flex-direction: column; align-items: flex-start; gap: 2px;
+  width: 100%; padding: 0.7rem 0.8rem;
+  border: 1px solid #24303d; border-radius: 10px;
+  background: #131b24; color: #d7e2ee; text-align: left;
+}
+.places__row:active { background: #1b2734; }
+.places__name { font-size: 1rem; font-weight: 600; }
+.places__where { font-size: 0.8rem; color: #7f9bb5; }

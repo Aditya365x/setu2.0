@@ -248,6 +248,68 @@ ALTER TABLE incidents ADD COLUMN IF NOT EXISTS has_disabled  BOOLEAN DEFAULT fal
 -- operator can tell a corrected pin from a stale one.
 ALTER TABLE reports ADD COLUMN IF NOT EXISTS last_location_update TIMESTAMPTZ;
 
+-- ── relief supplies (§ "allocate rescue teams and relief supplies") ────────
+-- Rescue is one-to-one matching and is solved by the Hungarian assignment in
+-- §6.5. Relief is a different problem: one truck serves several incidents, one
+-- incident may need several trucks, and stock depletes as it is delivered. That
+-- is a capacitated transportation problem — the same shape as shelter
+-- evacuation — so it reuses the min-cost flow rather than the assignment solver.
+--
+-- Two commodities, tracked separately rather than collapsed into an abstract
+-- "supply unit": a truck can run out of water while still carrying food, and an
+-- operator needs to see which.
+ALTER TABLE resources ADD COLUMN IF NOT EXISTS stock_water_l INT DEFAULT 0;
+ALTER TABLE resources ADD COLUMN IF NOT EXISTS stock_food_kg INT DEFAULT 0;
+
+-- What a delivery actually moved. Recorded per assignment so the audit log can
+-- answer "who received what" after the event, which is the question that
+-- decides compensation claims.
+ALTER TABLE assignments ADD COLUMN IF NOT EXISTS water_l INT;
+ALTER TABLE assignments ADD COLUMN IF NOT EXISTS food_kg INT;
+
+-- Cumulative delivery per incident, so need can be computed against what has
+-- already arrived rather than re-delivering the same relief every cycle.
+ALTER TABLE incidents ADD COLUMN IF NOT EXISTS water_delivered_l INT DEFAULT 0;
+ALTER TABLE incidents ADD COLUMN IF NOT EXISTS food_delivered_kg INT DEFAULT 0;
+
+-- Like-for-like comparison: mean response over the incidents BOTH strategies
+-- served. Each strategy's mean over its own set is a selection effect, not a
+-- measurement — greedy strands the hard incidents and averages over the easy
+-- remainder. See services/assignment.py::compare().
+ALTER TABLE solver_runs ADD COLUMN IF NOT EXISTS mean_common_opt NUMERIC(6,2);
+ALTER TABLE solver_runs ADD COLUMN IF NOT EXISTS mean_common_greedy NUMERIC(6,2);
+ALTER TABLE solver_runs ADD COLUMN IF NOT EXISTS common_incidents INT;
+
+-- ── gazetteer: typing where you are ───────────────────────────────────────
+-- GPS fails and a six-digit PIN code is not something everyone knows. A person
+-- on a borrowed phone in the rain can still type "Chikiti" or the name of the
+-- school they are sheltering behind, and that has to resolve to a point on the
+-- operator's map.
+--
+-- Deliberately built from data we already hold — block headquarters and the
+-- shelter register — rather than an external geocoder. Nominatim would need the
+-- internet, which is the one thing this product assumes it does not have, and
+-- it would happily return a match 2,000 km outside the covered corridor.
+CREATE EXTENSION IF NOT EXISTS pg_trgm;
+
+CREATE TABLE IF NOT EXISTS places (
+    id          BIGSERIAL PRIMARY KEY,
+    district_id INT NOT NULL REFERENCES districts(id),
+    name        TEXT NOT NULL,
+    kind        TEXT NOT NULL,              -- town | shelter
+    geom        geography(POINT,4326) NOT NULL,
+    -- How precisely this name locates somebody. A named building is a point; a
+    -- block headquarters stands for the whole block, and saying so honestly is
+    -- what keeps the trust score and the map circle truthful.
+    accuracy_m  INT NOT NULL DEFAULT 5000,
+    UNIQUE (district_id, name, kind)
+);
+
+-- Trigram index: fuzzy matching so "chikity", "chikiti" and "Chikti" all find
+-- the same village. Exact-match-only search is useless to someone in a panic.
+CREATE INDEX IF NOT EXISTS idx_places_name_trgm ON places USING GIN (name gin_trgm_ops);
+CREATE INDEX IF NOT EXISTS idx_places_geom ON places USING GIST (geom);
+
 -- Scale path (not needed at hackathon scale; state it in the pitch):
 -- reports & audit_log PARTITION BY RANGE (created_at) with monthly partitions,
 -- sub-partitioned by district_id hash for multi-district deployments.

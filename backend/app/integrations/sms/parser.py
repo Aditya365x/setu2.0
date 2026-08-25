@@ -80,21 +80,35 @@ DISTRICT_CENTROID_SQL = text(
     "FROM districts WHERE id = :did"
 )
 
-# Pincode centroids are seeded per district. Missing ones fall back to the
-# district centroid rather than rejecting the message.
+# Pincode centroids, looked up across EVERY seeded district.
+#
+# This used to be scoped to the gateway's own district, and that quietly broke
+# the whole SMS fallback the moment the corridor was seeded: an SMS reading
+# "FLOOD 4 522101" from Bapatla found no match inside Ganjam, fell back to the
+# Ganjam centroid, and was filed to the Ganjam DEOC — 500 km from the sender.
+# The message was accepted, the reference code was issued, and the person was
+# invisible to the control room that could actually reach them.
+#
+# One inbound shortcode serves the whole deployment, so the pincode itself has
+# to decide which district owns the report. `ingest_report` then files it by
+# position, and the right DEOC sees it.
 PINCODE_SQL = text(
     """
-    SELECT ST_Y(geom::geometry) AS lat, ST_X(geom::geometry) AS lng
-    FROM pincodes WHERE pincode = :pin AND district_id = :did
+    SELECT p.district_id, p.name,
+           ST_Y(p.geom::geometry) AS lat, ST_X(p.geom::geometry) AS lng
+    FROM pincodes p
+    WHERE p.pincode = :pin
+    ORDER BY (p.district_id = :did) DESC, p.district_id
+    LIMIT 1
     """
 )
 
 # The district's own pincode prefixes, derived from the seeded rows rather than
 # hardcoded. See the geocode endpoint for why: a pincode from another state is
 # not a low-precision answer, it is a different district's problem.
-DISTRICT_PREFIX_SQL = text(
-    "SELECT DISTINCT left(pincode, 3) FROM pincodes WHERE district_id = :did"
-)
+# Every prefix the deployment covers, not just one district's. A shortcode is
+# national; the corridor is what decides whether we can help.
+DISTRICT_PREFIX_SQL = text("SELECT DISTINCT left(pincode, 3) FROM pincodes")
 
 
 async def parse_sms(session: AsyncSession, message: str, district_id: int) -> ParsedSms:
@@ -135,6 +149,10 @@ async def parse_sms(session: AsyncSession, message: str, district_id: int) -> Pa
             ).mappings().one_or_none()
             if row:
                 lat, lng = float(row["lat"]), float(row["lng"])
+                # Found, but in a different district than the gateway's default.
+                # Not an error — one shortcode covers the whole corridor — so it
+                # is recorded rather than flagged for review.
+                out_of_district = int(row["district_id"]) != district_id
             else:
                 # Unseeded. Is it plausibly ours at all, or another district's?
                 # Unlike the PWA, an SMS is never rejected — someone may be in
@@ -142,13 +160,12 @@ async def parse_sms(session: AsyncSession, message: str, district_id: int) -> Pa
                 # flagged for the operator queue instead.
                 prefixes = {
                     r[0]
-                    for r in (
-                        await session.execute(
-                            DISTRICT_PREFIX_SQL, {"did": district_id}
-                        )
-                    ).all()
+                    for r in (await session.execute(DISTRICT_PREFIX_SQL)).all()
                 }
                 if prefixes and pincode[:3] not in prefixes:
+                    # Not a pincode this deployment covers at all. Still
+                    # ingested — never drop a message from someone who may be
+                    # in the water — but an operator has to look at it.
                     out_of_district = True
                     needs_review = True
         except Exception:

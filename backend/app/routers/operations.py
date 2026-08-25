@@ -16,6 +16,8 @@ from ..bus import publish, trigger_optimize
 from ..config import settings
 from ..db import get_session
 from ..schemas.report import Metrics
+from ..services.conditions import all_district_conditions, district_conditions
+from ..services.supplies import FOOD_KG_PER_PERSON_DAY, WATER_L_PER_PERSON_DAY
 
 router = APIRouter(prefix="/api/v1", tags=["operations"])
 
@@ -49,6 +51,42 @@ async def _audit(
 
 
 # ── district ───────────────────────────────────────────────────────────────
+@router.get("/districts")
+async def list_districts(session: AsyncSession = Depends(get_session)) -> list[dict]:
+    """Every seeded district, with a live count of what is happening in it.
+
+    Drives the dashboard's district picker. The counts matter as much as the
+    names: an operator switching districts wants to know where the load is, not
+    just that sixteen districts exist.
+    """
+    rows = (
+        await session.execute(
+            text(
+                """
+                SELECT d.id, d.name, d.state, d.lgd_code,
+                       ST_Y(d.centroid::geometry) AS lat,
+                       ST_X(d.centroid::geometry) AS lng,
+                       (SELECT COUNT(*) FROM incidents i
+                         WHERE i.district_id = d.id
+                           AND i.status IN ('open','assigned')) AS open_incidents,
+                       (SELECT COUNT(*) FROM incidents i
+                         WHERE i.district_id = d.id
+                           AND i.status IN ('open','assigned')
+                           AND i.severity_score >= 70) AS critical,
+                       (SELECT COUNT(*) FROM resources r
+                         WHERE r.district_id = d.id
+                           AND r.status IN ('idle','returning')) AS units_free,
+                       (SELECT COUNT(*) FROM shelters s
+                         WHERE s.district_id = d.id AND s.status = 'open') AS shelters_open
+                FROM districts d
+                ORDER BY d.state, d.name
+                """
+            )
+        )
+    ).mappings().all()
+    return [dict(r) for r in rows]
+
+
 @router.get("/district")
 async def district(
     district_id: int = Query(default=settings.district_id),
@@ -74,6 +112,82 @@ async def district(
 
 
 # ── geocoding fallback ─────────────────────────────────────────────────────
+@router.get("/geocode/search")
+async def geocode_search(
+    q: str,
+    limit: int = 8,
+    session: AsyncSession = Depends(get_session),
+) -> list[dict]:
+    """Type where you are.
+
+    The third way into a location, after GPS and a PIN code, and the one that
+    works when the other two do not: no satellite fix, and no idea what the
+    local PIN code is. Somebody can still type the name of their village, or of
+    the school they are sheltering behind.
+
+    Searched against our OWN gazetteer — block headquarters and the shelter
+    register — not an external geocoder. Two reasons, and both are load-bearing:
+    Nominatim needs the internet, which is the one thing this product assumes it
+    does not have; and it would cheerfully return a match 2,000 km outside the
+    covered corridor, which is worse than no answer because it looks like one.
+
+    Ranked so that exact and prefix matches beat fuzzy ones, with trigram
+    similarity underneath to absorb the spelling of somebody typing one-handed
+    in the rain. `accuracy_m` travels with the answer: a named building is a
+    point, a block name stands for the whole block, and the report should say
+    which rather than implying precision it does not have.
+    """
+    term = q.strip()
+    if len(term) < 2:
+        return []
+
+    rows = (
+        await session.execute(
+            text(
+                """
+                SELECT p.id, p.name, p.kind, p.accuracy_m,
+                       d.id AS district_id, d.name AS district_name, d.state,
+                       ST_Y(p.geom::geometry) AS lat,
+                       ST_X(p.geom::geometry) AS lng,
+                       similarity(p.name, :q) AS sim
+                FROM places p JOIN districts d ON d.id = p.district_id
+                WHERE p.name ILIKE :contains
+                   OR similarity(p.name, :q) > 0.25
+                ORDER BY
+                    -- exact, then starts-with, then anywhere, then fuzzy
+                    (lower(p.name) = lower(:q)) DESC,
+                    (p.name ILIKE :prefix) DESC,
+                    (p.name ILIKE :contains) DESC,
+                    similarity(p.name, :q) DESC,
+                    -- a town beats a building of the same score: somebody
+                    -- typing "Chikiti" means the place, not a school in it
+                    (p.kind = 'town') DESC,
+                    p.name
+                LIMIT :lim
+                """
+            ),
+            {"q": term, "prefix": f"{term}%", "contains": f"%{term}%", "lim": limit},
+        )
+    ).mappings().all()
+
+    return [
+        {
+            "name": r["name"],
+            "kind": r["kind"],
+            "lat": r["lat"],
+            "lng": r["lng"],
+            "accuracy_m": r["accuracy_m"],
+            "district_id": r["district_id"],
+            "district_name": r["district_name"],
+            "state": r["state"],
+            # What the citizen actually reads in the results list.
+            "label": f"{r['name']} · {r['district_name']}, {r['state']}",
+        }
+        for r in rows
+    ]
+
+
+
 @router.get("/geocode/pincode/{pincode}")
 async def geocode_pincode(
     pincode: str,
@@ -124,45 +238,125 @@ async def geocode_pincode(
     if not centroid:
         raise HTTPException(404, "district not seeded")
 
-    # Which pincodes plausibly belong to this district, derived from the seeded
-    # table rather than hardcoded. India Post allocates contiguous prefixes per
-    # sorting district, so the first three digits of the seeded rows are the
-    # district's own prefixes — 760/761 for Ganjam. Swapping in the full India
+    # Before rejecting: does this pincode belong to a DIFFERENT seeded district?
+    #
+    # With the whole coastal corridor seeded, "not Ganjam" is usually not the
+    # same as "not covered". Somebody in Puri typing 752001 into a Ganjam-framed
+    # app should be routed to Puri, not turned away — the deployment does cover
+    # them, just under a different district_id. Rejecting them here would be the
+    # out-of-district bug all over again, one level up.
+    neighbour = (
+        await session.execute(
+            text(
+                """
+                SELECT p.district_id, p.name, d.name AS district_name,
+                       ST_Y(p.geom::geometry) AS lat, ST_X(p.geom::geometry) AS lng
+                FROM pincodes p JOIN districts d ON d.id = p.district_id
+                WHERE p.pincode = :pin
+                ORDER BY p.district_id
+                LIMIT 1
+                """
+            ),
+            {"pin": pin},
+        )
+    ).mappings().one_or_none()
+
+    if neighbour:
+        return {
+            "lat": neighbour["lat"], "lng": neighbour["lng"],
+            "name": neighbour["name"],
+            "accuracy_m": 3000, "source": "pincode", "in_district": True,
+            # The caller asked about one district and got an answer from
+            # another. Say so rather than letting a report land under a
+            # district_id the reporter never chose.
+            "district_id": neighbour["district_id"],
+            "district_name": neighbour["district_name"],
+            "redirected": neighbour["district_id"] != district_id,
+        }
+
+    # Which pincodes plausibly belong to this deployment, derived from the
+    # seeded table rather than hardcoded. India Post allocates contiguous
+    # prefixes per sorting district, so the first three digits of the seeded
+    # rows are the covered prefixes — 760/761 Ganjam, 752 Puri, 754
+    # Jagatsinghpur/Kendrapara, 756 Bhadrak/Balasore. Swapping in the full India
     # Post file widens this automatically; nothing here needs editing.
-    prefixes = {
-        r[0]
-        for r in (
-            await session.execute(
-                text(
-                    "SELECT DISTINCT left(pincode, 3) FROM pincodes "
-                    "WHERE district_id = :did"
-                ),
-                {"did": district_id},
+    covered = (
+        await session.execute(
+            text(
+                """
+                SELECT DISTINCT left(p.pincode, 3) AS prefix, p.district_id,
+                       d.name AS district_name
+                FROM pincodes p JOIN districts d ON d.id = p.district_id
+                """
             )
-        ).all()
-    }
+        )
+    ).mappings().all()
+    prefixes = {c["prefix"] for c in covered}
 
     # An unseeded deployment has no prefixes to compare against. Degrade to the
-    # old permissive behaviour rather than rejecting every pincode.
+    # permissive behaviour rather than rejecting every pincode.
     if prefixes and pin[:3] not in prefixes:
+        covered_names = sorted({c["district_name"] for c in covered})
         raise HTTPException(
             404,
             {
                 "error": "pincode_out_of_district",
                 "pincode": pin,
                 "district": centroid["name"],
+                "covered_districts": covered_names,
                 "message": (
-                    f"PIN {pin} is not in {centroid['name']} district. "
-                    f"This SETU deployment covers {centroid['name']} only."
+                    f"PIN {pin} is not in any district this SETU deployment "
+                    f"covers. Covered: {', '.join(covered_names)}."
                 ),
             },
         )
+
+    # In-corridor prefix but not an individually seeded pincode. Attribute it to
+    # the district that owns that prefix rather than to whichever district the
+    # caller happened to ask about.
+    owner = next((c for c in covered if c["prefix"] == pin[:3]), None)
+    if owner and owner["district_id"] != district_id:
+        home = (
+            await session.execute(
+                text(
+                    "SELECT name, ST_Y(centroid::geometry) AS lat, "
+                    "ST_X(centroid::geometry) AS lng FROM districts WHERE id = :did"
+                ),
+                {"did": owner["district_id"]},
+            )
+        ).mappings().one_or_none()
+        if home:
+            return {
+                "lat": home["lat"], "lng": home["lng"],
+                "name": f"{home['name']} (approximate)",
+                "accuracy_m": 25000, "source": "district_centroid",
+                "in_district": True,
+                "district_id": owner["district_id"],
+                "district_name": home["name"],
+                "redirected": True,
+            }
 
     # In-district but not individually seeded. The district centroid with its
     # true 25 km accuracy stated is far more useful than no report at all.
     return {"lat": centroid["lat"], "lng": centroid["lng"],
             "name": f"{centroid['name']} (approximate)",
             "accuracy_m": 25000, "source": "district_centroid", "in_district": True}
+
+
+# ── live conditions ────────────────────────────────────────────────────────
+@router.get("/conditions")
+async def all_conditions(session: AsyncSession = Depends(get_session)) -> list[dict]:
+    """Every district's hazard outlook, worst first. Drives the live feed."""
+    return await all_district_conditions(session)
+
+
+@router.get("/conditions/{district_id}")
+async def one_condition(
+    district_id: int, session: AsyncSession = Depends(get_session)
+) -> dict:
+    """One district: weather now, official alerts, what is actually happening,
+    and a per-hazard likelihood with its reasons."""
+    return await district_conditions(session, district_id)
 
 
 # ── incidents ──────────────────────────────────────────────────────────────
@@ -178,18 +372,30 @@ async def list_incidents(
         await session.execute(
             text(
                 """
-                SELECT id, hazard_type::text AS hazard_type, status,
-                       severity_score::float AS severity_score, severity_breakdown,
-                       report_count, people_affected_est, needs_medical,
-                       has_children, has_elderly, has_injured, has_disabled,
-                       sla_deadline, opened_at,
-                       ST_Y(centroid::geometry) AS lat, ST_X(centroid::geometry) AS lng
-                FROM incidents
-                WHERE district_id = :did
-                  AND (CAST(:status AS text) IS NULL OR status = CAST(:status AS text))
-                  AND (CAST(:hazard AS text) IS NULL OR hazard_type::text = CAST(:hazard AS text))
-                  AND severity_score >= :min_sev
-                ORDER BY severity_score DESC
+                SELECT i.id, i.hazard_type::text AS hazard_type, i.status,
+                       i.severity_score::float AS severity_score, i.severity_breakdown,
+                       i.report_count, i.people_affected_est, i.needs_medical,
+                       i.has_children, i.has_elderly, i.has_injured, i.has_disabled,
+                       i.sla_deadline, i.opened_at,
+                       -- The citizen-facing reference codes that make up this
+                       -- incident. An incident is a CLUSTER of reports, so it
+                       -- carries several — the operator needs to be able to
+                       -- match any of them to a caller on the phone. Ordered by
+                       -- arrival so the first is the one that opened it.
+                       COALESCE(
+                           (SELECT array_agg(r.reference_code ORDER BY r.created_at)
+                              FROM reports r
+                             WHERE r.incident_id = i.id
+                               AND r.reference_code IS NOT NULL),
+                           ARRAY[]::text[]
+                       ) AS reference_codes,
+                       ST_Y(i.centroid::geometry) AS lat, ST_X(i.centroid::geometry) AS lng
+                FROM incidents i
+                WHERE i.district_id = :did
+                  AND (CAST(:status AS text) IS NULL OR i.status = CAST(:status AS text))
+                  AND (CAST(:hazard AS text) IS NULL OR i.hazard_type::text = CAST(:hazard AS text))
+                  AND i.severity_score >= :min_sev
+                ORDER BY i.severity_score DESC
                 """
             ),
             {"did": district_id, "status": status, "hazard": hazard, "min_sev": min_severity},
@@ -210,6 +416,8 @@ async def incident_detail(
                        severity_score::float AS severity_score, severity_breakdown,
                        report_count, people_affected_est, needs_medical, sla_deadline,
                        has_children, has_elderly, has_injured, has_disabled,
+                       COALESCE(water_delivered_l, 0) AS water_delivered_l,
+                       COALESCE(food_delivered_kg, 0) AS food_delivered_kg,
                        opened_at, ST_Y(centroid::geometry) AS lat,
                        ST_X(centroid::geometry) AS lng
                 FROM incidents WHERE id = :id
@@ -256,11 +464,31 @@ async def incident_detail(
         )
     ).mappings().one_or_none()
 
+    supply = (
+        await session.execute(
+            text(
+                """
+                SELECT a.id, a.status, a.resource_id, r.name AS resource_name,
+                       a.water_l, a.food_kg, a.eta_seconds,
+                       r.stock_water_l, r.stock_food_kg
+                FROM assignments a JOIN resources r ON r.id = a.resource_id
+                WHERE a.incident_id = :id AND a.kind = 'supply'
+                  AND a.status IN ('proposed','committed')
+                ORDER BY a.eta_seconds
+                """
+            ),
+            {"id": incident_id},
+        )
+    ).mappings().all()
+
     evacuation = (
         await session.execute(
             text(
                 """
-                SELECT a.shelter_id, s.name AS shelter_name, a.people, a.eta_seconds
+                SELECT a.id, a.status, a.shelter_id, s.name AS shelter_name,
+                       a.people, a.eta_seconds,
+                       s.occupancy, s.capacity_total,
+                       GREATEST(s.capacity_total - s.occupancy, 0) AS beds_free
                 FROM assignments a JOIN shelters s ON s.id = a.shelter_id
                 WHERE a.incident_id = :id AND a.kind = 'evacuation'
                   AND a.status IN ('proposed','committed')
@@ -276,6 +504,24 @@ async def incident_detail(
         "reports": [dict(r) for r in reports],
         "assignment": dict(assignment) if assignment else None,
         "evacuation_plan": [dict(e) for e in evacuation],
+        "supply_plan": [dict(x) for x in supply],
+        # What this incident still needs at Sphere standards, net of what has
+        # already arrived. Shown next to the plan so an operator can see whether
+        # the plan actually closes the gap.
+        "supply_need": {
+            "water_l": max(
+                0,
+                int((inc["people_affected_est"] or 0) * WATER_L_PER_PERSON_DAY)
+                - int(inc["water_delivered_l"] or 0),
+            ),
+            "food_kg": max(
+                0,
+                int((inc["people_affected_est"] or 0) * FOOD_KG_PER_PERSON_DAY)
+                - int(inc["food_delivered_kg"] or 0),
+            ),
+            "water_delivered_l": int(inc["water_delivered_l"] or 0),
+            "food_delivered_kg": int(inc["food_delivered_kg"] or 0),
+        },
     }
 
 
@@ -618,30 +864,48 @@ async def shelters_nearby(
     lat: float,
     lng: float,
     limit: int = 5,
-    district_id: int = Query(default=settings.district_id),
+    max_km: float = 60.0,
     session: AsyncSession = Depends(get_session),
 ) -> list[dict]:
     """§12 — nearest shelters, for a citizen deciding where to walk.
 
-    Ordered by real distance, and it returns FULL shelters too rather than
-    hiding them. Someone who can see the nearest one is full walks to the
-    second instead of arriving and being turned away.
+    Searched across EVERY district, deliberately. This used to filter on
+    `district_id`, defaulting to the deployment's configured district — so a
+    reporter standing in Bapatla was handed shelters in Chikiti, 569 km away in
+    another state, because those were the only ones the query could see. The
+    distances were computed correctly and the answer was still useless.
+
+    Somebody deciding which way to walk does not care whose district a building
+    is in, and a district border is exactly where the nearest shelter is most
+    likely to be on the other side. So this is a geographic query with no
+    administrative filter; the owning district travels back in the response so
+    the operator and the citizen can both see it.
+
+    `max_km` bounds it so a location outside the covered corridor gets an empty
+    list — an honest "nothing near you" — instead of a shelter 600 km away
+    presented as the closest option.
+
+    Full shelters are returned too rather than hidden: someone who can see the
+    nearest one is full walks to the second instead of arriving and being turned
+    away.
     """
     rows = (
         await session.execute(
             text(
                 """
-                SELECT id, name, capacity_total, occupancy, status,
-                       has_medical, has_water, has_power, contact,
-                       ST_Y(geom::geometry) AS lat, ST_X(geom::geometry) AS lng,
-                       ST_Distance(geom, ST_MakePoint(:lng, :lat)::geography) AS distance_m
-                FROM shelters
-                WHERE district_id = :did
-                ORDER BY geom <-> ST_MakePoint(:lng, :lat)::geography
+                SELECT s.id, s.name, s.capacity_total, s.occupancy, s.status,
+                       s.has_medical, s.has_water, s.has_power, s.contact,
+                       d.name AS district_name, d.state,
+                       ST_Y(s.geom::geometry) AS lat, ST_X(s.geom::geometry) AS lng,
+                       ST_Distance(s.geom, ST_MakePoint(:lng, :lat)::geography) AS distance_m
+                FROM shelters s
+                LEFT JOIN districts d ON d.id = s.district_id
+                WHERE ST_DWithin(s.geom, ST_MakePoint(:lng, :lat)::geography, :max_m)
+                ORDER BY s.geom <-> ST_MakePoint(:lng, :lat)::geography
                 LIMIT :lim
                 """
             ),
-            {"did": district_id, "lat": lat, "lng": lng, "lim": limit},
+            {"lat": lat, "lng": lng, "lim": limit, "max_m": max_km * 1000.0},
         )
     ).mappings().all()
 
@@ -669,6 +933,12 @@ async def shelters_nearby(
                 "has_water": r["has_water"],
                 "has_power": r["has_power"],
                 "contact": r["contact"],
+                # Which district actually owns this building. Near a border the
+                # nearest shelter is routinely in the next district, and the
+                # citizen should be able to see that rather than be surprised
+                # by it on arrival.
+                "district_name": r["district_name"],
+                "state": r["state"],
             }
         )
     return out
@@ -678,7 +948,6 @@ async def shelters_nearby(
 async def alerts_for_location(
     lat: float,
     lng: float,
-    district_id: int = Query(default=settings.district_id),
     session: AsyncSession = Depends(get_session),
 ) -> list[dict]:
     """§13 — official alerts covering THIS point, for the citizen app.
@@ -696,8 +965,12 @@ async def alerts_for_location(
                        headline, instruction, effective_from, expires_at,
                        source_agency
                 FROM alerts
-                WHERE district_id = :did
-                  AND expires_at > now()
+                -- No district filter, for the same reason as shelters above: a
+                -- CAP polygon is a weather system, and weather does not stop at
+                -- a district line. The polygon test already answers the only
+                -- question that matters — does this alert cover where you are
+                -- standing.
+                WHERE expires_at > now()
                   AND area_polygon IS NOT NULL
                   AND ST_Intersects(area_polygon, ST_MakePoint(:lng, :lat)::geography)
                 ORDER BY CASE severity
@@ -708,7 +981,7 @@ async def alerts_for_location(
                              ELSE 0 END DESC
                 """
             ),
-            {"did": district_id, "lat": lat, "lng": lng},
+            {"lat": lat, "lng": lng},
         )
     ).mappings().all()
     return [dict(r) for r in rows]
@@ -725,6 +998,8 @@ async def list_resources(
             text(
                 """
                 SELECT id, name, type::text AS type, agency, capabilities, capacity,
+                       COALESCE(stock_water_l, 0) AS stock_water_l,
+                       COALESCE(stock_food_kg, 0) AS stock_food_kg,
                        load, status, committed_incident_id, contact,
                        ST_Y(current_geom::geometry) AS lat,
                        ST_X(current_geom::geometry) AS lng
@@ -875,7 +1150,8 @@ async def commit_assignment(
     row = (
         await session.execute(
             text(
-                "SELECT district_id, incident_id, resource_id, status "
+                "SELECT district_id, incident_id, resource_id, shelter_id, kind, "
+                "       people, water_l, food_kg, status "
                 "FROM assignments WHERE id = :id"
             ),
             {"id": assignment_id},
@@ -891,6 +1167,112 @@ async def commit_assignment(
              "WHERE id = :id"),
         {"id": assignment_id},
     )
+
+    if row["kind"] == "supply":
+        # Delivering relief moves real stock off a real truck. Without this the
+        # plan would re-deliver the same water every cycle and report full
+        # coverage while nothing left the depot — the same failure the shelter
+        # occupancy had before it was wired up.
+        #
+        # GREATEST(... , 0) clamps so two operators committing overlapping plans
+        # cannot drive a truck's stock negative.
+        water = int(row["water_l"] or 0)
+        food = int(row["food_kg"] or 0)
+
+        await session.execute(
+            text(
+                """
+                UPDATE resources
+                   SET stock_water_l = GREATEST(COALESCE(stock_water_l, 0) - :water, 0),
+                       stock_food_kg = GREATEST(COALESCE(stock_food_kg, 0) - :food, 0)
+                 WHERE id = :rid
+                """
+            ),
+            {"rid": row["resource_id"], "water": water, "food": food},
+        )
+        # Credited to the incident so the next cycle plans the remainder rather
+        # than the whole need again.
+        await session.execute(
+            text(
+                """
+                UPDATE incidents
+                   SET water_delivered_l = COALESCE(water_delivered_l, 0) + :water,
+                       food_delivered_kg = COALESCE(food_delivered_kg, 0) + :food
+                 WHERE id = :iid
+                """
+            ),
+            {"iid": row["incident_id"], "water": water, "food": food},
+        )
+
+        await _audit(
+            session, row["district_id"], body.get("actor", "operator"),
+            "commit_supply", "assignment", assignment_id, dict(row),
+            {"water_l": water, "food_kg": food}, body.get("reason"),
+        )
+        await session.commit()
+        await publish(
+            row["district_id"], "supply.delivered",
+            {"incident_id": row["incident_id"], "resource_id": row["resource_id"],
+             "water_l": water, "food_kg": food},
+        )
+        await trigger_optimize(row["district_id"], "supply_committed")
+        return {"ok": True, "kind": "supply", "water_l": water, "food_kg": food}
+
+    if row["kind"] == "evacuation":
+        # §6.6 — actually move the people.
+        #
+        # The min-cost flow has been computing evacuation plans since P1, but
+        # nothing ever wrote the result back: `shelters.occupancy` stayed at 0
+        # forever, so every shelter read "1382 free / 1382", "people evacuated"
+        # read 0, and the shortfall alarm could never fire because the district
+        # never appeared to fill. The plan was real and permanently unactionable.
+        #
+        # LEAST() clamps to the free beds that exist AT COMMIT TIME rather than
+        # when the plan was computed — two operators committing overlapping
+        # plans must not be able to push a shelter past its own capacity.
+        placed = (
+            await session.execute(
+                text(
+                    """
+                    UPDATE shelters
+                       SET occupancy = occupancy
+                                     + LEAST(:people, GREATEST(capacity_total - occupancy, 0)),
+                           status = CASE
+                                        WHEN occupancy
+                                             + LEAST(:people,
+                                                     GREATEST(capacity_total - occupancy, 0))
+                                             >= capacity_total THEN 'full'
+                                        ELSE status
+                                    END
+                     WHERE id = :sid
+                    RETURNING occupancy, capacity_total,
+                              LEAST(:people, GREATEST(capacity_total - occupancy, 0)) AS taken
+                    """
+                ),
+                {"sid": row["shelter_id"], "people": int(row["people"] or 0)},
+            )
+        ).mappings().one_or_none()
+
+        await _audit(
+            session, row["district_id"], body.get("actor", "operator"),
+            "commit_evacuation", "assignment", assignment_id, dict(row),
+            {"shelter_id": row["shelter_id"], "people": int(row["people"] or 0)},
+            body.get("reason"),
+        )
+        await session.commit()
+        await publish(
+            row["district_id"], "shelter.updated",
+            {"shelter_id": row["shelter_id"],
+             "occupancy": placed["occupancy"] if placed else None,
+             "people": int(row["people"] or 0)},
+        )
+        return {
+            "ok": True,
+            "kind": "evacuation",
+            "shelter_id": row["shelter_id"],
+            "people_placed": int(placed["taken"]) if placed else 0,
+        }
+
     # Commitment locking: from here the pairing is a fixed input to every later
     # solver run, so the map stops thrashing.
     await session.execute(
@@ -1109,6 +1491,7 @@ async def metrics(
             text(
                 """
                 SELECT mean_response_opt, mean_response_greedy, worst_case_opt,
+                       mean_common_opt, mean_common_greedy, common_incidents,
                        worst_case_greedy, unassigned_critical_opt,
                        unassigned_critical_greedy, served_opt, served_greedy,
                        total_response_opt, total_response_greedy,
@@ -1150,6 +1533,11 @@ async def metrics(
             "optimized": float(run["worst_case_opt"]) if run else 0.0,
             "greedy": float(run["worst_case_greedy"]) if run else 0.0,
         },
+        mean_common_min={
+            "optimized": float(run["mean_common_opt"] or 0) if run else 0.0,
+            "greedy": float(run["mean_common_greedy"] or 0) if run else 0.0,
+        },
+        common_incidents=int(run["common_incidents"] or 0) if run else 0,
         incidents_served={
             "optimized": int(run["served_opt"] or 0) if run else 0,
             "greedy": int(run["served_greedy"] or 0) if run else 0,

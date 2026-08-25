@@ -104,7 +104,16 @@ export default function ResourcePanel() {
                     <li key={r.id} className={`runit runit--${STATUS_TONE[r.status]}`}>
                       <span className="runit__name">{r.name}</span>
                       <span className="runit__meta">
-                        <span className="runit__cap">cap {r.capacity}</span>
+                        {/* Supply trucks are measured in stock, not seats — a
+                            truck with an empty tank is not relief capacity. */}
+                        {r.stock_water_l || r.stock_food_kg ? (
+                          <span className="runit__cap">
+                            {r.stock_water_l?.toLocaleString()}L ·{' '}
+                            {r.stock_food_kg?.toLocaleString()}kg
+                          </span>
+                        ) : (
+                          <span className="runit__cap">cap {r.capacity}</span>
+                        )}
                         <span className="runit__status">{r.status}</span>
                       </span>
                     </li>

@@ -111,4 +111,3 @@ async def eta_matrix(
     router = get_router()
     M = await router.matrix(resources, incidents)
     return M, router.degraded
- 

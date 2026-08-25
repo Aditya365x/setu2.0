@@ -7,7 +7,12 @@ fails, the pitch is wrong, not just the code.
 import numpy as np
 import pytest
 
-from app.services.assignment import build_cost_matrix, evaluate, solve
+from app.services.assignment import (
+    build_cost_matrix,
+    evaluate,
+    solve,
+    units_required,
+)
 from app.services.types import IncidentView, ResourceView
 
 
@@ -75,7 +80,21 @@ def test_capability_constraint_is_hard():
     assert solve([truck], [collapse], eta) == []
 
 
-def test_capacity_constraint_is_hard():
+def test_capacity_never_blocks_dispatch():
+    """A unit too small to carry everyone is still sent.
+
+    This assertion is the REVERSE of what this test used to claim, and the
+    reversal is deliberate. The old version asserted that a boat with capacity 4
+    must NOT be dispatched to a 40-person incident — and that is exactly the
+    behaviour that, in a live run, found an 80-person flood, discovered that
+    every boat (30) and every rescue team (40) failed `people > capacity`, and
+    dispatched nobody at all.
+
+    A boat that holds 4 can still take 4 people off a roof and come back. In a
+    life-safety system "no single unit can carry everyone in one go" is never a
+    reason to send no one, so capacity is now a preference and capability
+    remains the only hard constraint on suitability.
+    """
     small = ResourceView(
         id=3, name="Boat Small", type="boat", agency="ODRAF",
         lat=19.31, lng=84.79, capabilities={"water_rescue"}, capacity=4,
@@ -85,7 +104,56 @@ def test_capacity_constraint_is_hard():
         severity_score=80.0, people_affected_est=40,
     )
     eta = np.array([[300.0]])
-    assert solve([small], [big_incident], eta) == []
+    assert solve([small], [big_incident], eta) == [(0, 0)]
+
+    # ...and the operator is told the truth about scale rather than being left
+    # to infer that one small boat has handled it.
+    assert units_required(big_incident, small) == 10
+
+
+def test_bigger_unit_wins_when_capacity_is_short():
+    """Capacity stopped being a veto; it must not have stopped mattering.
+
+    Two equally distant boats, one of which can clear the incident alone. The
+    larger one has to win, or the penalty is decorative.
+    """
+    small = ResourceView(
+        id=1, name="Boat Small", type="boat", agency="ODRAF",
+        lat=19.31, lng=84.79, capabilities={"water_rescue"}, capacity=6,
+    )
+    large = ResourceView(
+        id=2, name="Boat Large", type="boat", agency="ODRAF",
+        lat=19.31, lng=84.79, capabilities={"water_rescue"}, capacity=60,
+    )
+    incident = IncidentView(
+        id=7, hazard_type="flood", lat=19.32, lng=84.80,
+        severity_score=80.0, people_affected_est=50,
+    )
+    eta = np.array([[300.0], [300.0]])   # identical drive time
+    assert solve([small, large], [incident], eta) == [(1, 0)]
+
+
+def test_capability_still_outranks_capacity():
+    """Softening capacity must not have softened capability.
+
+    A supply truck with capacity 200 is a worse water rescue asset than a boat
+    with capacity 4, at any distance, because it cannot do the job at all.
+    """
+    truck = ResourceView(
+        id=1, name="Supply Truck", type="supply_truck", agency="NGO",
+        lat=19.31, lng=84.79, capabilities={"supply"}, capacity=200,
+    )
+    boat = ResourceView(
+        id=2, name="Boat Small", type="boat", agency="ODRAF",
+        lat=19.90, lng=84.79, capabilities={"water_rescue"}, capacity=4,
+    )
+    incident = IncidentView(
+        id=7, hazard_type="flood", lat=19.32, lng=84.80,
+        severity_score=80.0, people_affected_est=100,
+    )
+    # The truck is one minute away; the boat is an hour away. The boat still wins.
+    eta = np.array([[60.0], [3600.0]])
+    assert solve([truck, boat], [incident], eta) == [(1, 0)]
 
 
 def test_busy_units_never_enter_the_pool():

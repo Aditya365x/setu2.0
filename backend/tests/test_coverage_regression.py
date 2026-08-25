@@ -6,7 +6,7 @@ which is worse than a crash.
 
 import numpy as np
 
-from app.services.assignment import evaluate, solve
+from app.services.assignment import evaluate, solve, units_required
 from app.services.types import IncidentView, ResourceView
 
 
@@ -60,25 +60,37 @@ def test_hungarian_covers_at_least_as_many_incidents_as_greedy():
     assert optimized["total_response_min"] <= greedy["total_response_min"]
 
 
-def test_capacity_is_a_real_constraint_not_an_accident():
+def test_double_counted_people_are_visible_as_an_absurd_unit_count():
     """Guards the people-estimate bug from the other side.
 
-    `people_affected_est` is now MAX across the clustered reports, not SUM —
-    ten witnesses describing the same collapsed house is 3 people, not 30.
-    Summing inflated every incident past every unit's capacity, and the hard
-    capacity constraint then quietly made the incident unassignable. This test
-    pins the boundary so a regression shows up as a failure, not as a
-    mysteriously empty dispatch board.
+    `people_affected_est` is MAX across the clustered reports, not SUM — ten
+    witnesses describing the same collapsed house is 3 people, not 30.
+
+    This test used to detect double-counting by asserting that an inflated
+    incident became UNASSIGNABLE. That detector is gone on purpose: refusing to
+    dispatch was itself the bug (see test_capacity_never_blocks_dispatch), and
+    an inflated incident now gets a boat like any other.
+
+    So the regression is pinned on the quantity that still moves — the number of
+    units the plan says it needs. One boat for 24 people is a plausible
+    operation; eight boats for the same collapsed house is not, and that is what
+    a SUM regression would look like on screen.
     """
     boat = _boat(1, capacity=30)
     eta = np.array([[5 * 60.0]])
 
     within = _flood(1, 80.0, people=24)
     assert solve([boat], [within], eta.copy()) == [(0, 0)]
+    assert units_required(within, boat) == 1
 
-    # The same event, double-counted across duplicate reports.
+    # The same event, double-counted across ten duplicate reports.
     inflated = _flood(1, 80.0, people=240)
-    assert solve([boat], [inflated], eta.copy()) == []
+    assert solve([boat], [inflated], eta.copy()) == [(0, 0)], (
+        "an inflated estimate must still be dispatched to — never silently dropped"
+    )
+    assert units_required(inflated, boat) == 8, (
+        "a tenfold people estimate must surface as a tenfold unit requirement"
+    )
 
 
 def test_agency_preference_is_a_tiebreak_not_a_distortion():

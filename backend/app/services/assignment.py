@@ -9,6 +9,7 @@ Both strategies are implemented here and both are persisted every cycle, so the
 dashboard toggle reads two real stored plans rather than re-simulating one.
 """
 
+import math
 from datetime import datetime, timezone
 from typing import Sequence
 
@@ -29,9 +30,38 @@ FORBIDDEN = BIG / 2
 # (§5.4) — every live-demo dispatch bug traces back to violating this.
 AVAILABLE_STATES = ("idle", "returning")
 
+# How much response time we are willing to trade to send a unit that can carry
+# everyone in one trip rather than one that will need several.
+#
+# Capacity is deliberately NOT a hard constraint. It used to be, and that was
+# wrong in the way that matters most: an incident with 80 people trapped in a
+# flood found that every boat (30) and every rescue team (40) failed
+# `people > capacity`, so the solver forbade every pairing and dispatched
+# NOBODY. A boat that holds 30 can start rescuing 80 people — it makes trips,
+# or you send three boats. "No single unit can carry everyone in one go" is
+# never a reason to send no one.
+#
+# So capacity became a preference: bigger units are pulled toward bigger
+# incidents, and `units_required` below tells the operator how many are
+# actually needed. Capability stays hard, because it is genuinely binary — a
+# supply truck cannot perform a water rescue at any capacity.
+CAPACITY_SHORTFALL_PENALTY_MIN = 20.0
+
 
 def required_caps(incident: IncidentView) -> set[str]:
     return REQUIRED_CAPS.get(incident.hazard_type, set())
+
+
+def units_required(incident: IncidentView, resource: ResourceView) -> int:
+    """How many of this resource it takes to clear the incident in one wave.
+
+    Surfaced to the operator so the plan is honest about scale: one boat
+    dispatched against 80 people is a start, not a solution, and the dashboard
+    should say so rather than implying the incident is handled.
+    """
+    people = max(0, incident.people_affected_est or 0)
+    capacity = max(1, resource.capacity or 1)
+    return max(1, math.ceil(people / capacity))
 
 
 def build_cost_matrix(
@@ -49,13 +79,23 @@ def build_cost_matrix(
         for j, inc in enumerate(incidents):
             # ── hard constraints ──────────────────────────────────────────
             if not required_caps(inc).issubset(caps):
-                C[i][j] += BIG                      # wrong capability
-            if inc.people_affected_est > r.capacity:
-                C[i][j] += BIG                      # insufficient capacity
+                C[i][j] += BIG                      # wrong capability — binary
             if r.status not in AVAILABLE_STATES:
                 C[i][j] += BIG                      # not available
             if inc.status in ("resolved", "false_alarm"):
                 C[i][j] += BIG
+
+            # ── capacity: a preference, never a veto ──────────────────────
+            # Scaled by the FRACTION of people this unit cannot take, so a unit
+            # that clears the incident costs nothing extra, one that covers
+            # half pays half the penalty, and one that covers a tenth pays
+            # nearly all of it. Bounded by CAPACITY_SHORTFALL_PENALTY_MIN so it
+            # can reorder candidates without ever exceeding a realistic drive
+            # time — being far away must still beat being useless.
+            people = max(0, inc.people_affected_est or 0)
+            if people > r.capacity:
+                unserved = (people - r.capacity) / people
+                C[i][j] += CAPACITY_SHORTFALL_PENALTY_MIN * unserved
 
             # ── soft preferences ──────────────────────────────────────────
             # triage: severe incidents pull resources toward them
@@ -121,6 +161,47 @@ def solve(
     # Pairs the solver was forced into only because the matrix is rectangular
     # are dropped here, which makes "unassigned" explicit and auditable.
     return [(int(i), int(j)) for i, j in zip(rows, cols) if C[i][j] < FORBIDDEN]
+
+
+def compare(
+    opt: Sequence[tuple[int, int]],
+    greedy: Sequence[tuple[int, int]],
+    eta: np.ndarray,
+) -> dict:
+    """Like-for-like mean response, over the incidents BOTH strategies serve.
+
+    Comparing each strategy's mean over its own served set is not a comparison,
+    it is a selection effect. Greedy strands the incidents nobody can easily
+    reach and then averages over the easy remainder; the optimizer takes those
+    hard incidents on, and is punished on the mean for doing so. In one measured
+    run optimized served 27 incidents to greedy's 24 and still showed a 5.7%
+    WORSE mean — which reads on a dashboard as the optimizer losing, when it had
+    just rescued three more groups of people.
+
+    The honest number is the mean over the intersection: the same incidents,
+    both plans, head to head. Coverage is reported next to it, because the extra
+    incidents the optimizer serves are the whole point and must not disappear
+    into an average.
+    """
+    opt_by_incident = {j: i for i, j in opt}
+    greedy_by_incident = {j: i for i, j in greedy}
+    common = sorted(set(opt_by_incident) & set(greedy_by_incident))
+
+    if not common:
+        return {"common_incidents": 0, "mean_common_opt": 0.0, "mean_common_greedy": 0.0}
+
+    o = [eta[opt_by_incident[j]][j] / 60.0 for j in common]
+    g = [eta[greedy_by_incident[j]][j] / 60.0 for j in common]
+    return {
+        "common_incidents": len(common),
+        "mean_common_opt": round(float(np.mean(o)), 2),
+        "mean_common_greedy": round(float(np.mean(g)), 2),
+        # Where the two plans actually disagree. If this is 0 the strategies
+        # produced the same answer and any delta is noise.
+        "differing_assignments": sum(
+            1 for j in common if opt_by_incident[j] != greedy_by_incident[j]
+        ),
+    }
 
 
 def evaluate(

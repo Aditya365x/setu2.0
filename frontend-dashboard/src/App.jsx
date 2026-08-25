@@ -15,11 +15,26 @@ import { useStore } from './store'
  */
 export default function App() {
   const resync = useStore((s) => s.resync)
+  const selectIncident = useStore((s) => s.selectIncident)
+  const setDistrict = useStore((s) => s.setDistrict)
   useWebSocket()
 
   useEffect(() => {
-    resync().catch(() => {})
-  }, [resync])
+    // Deep links: ?district=9&incident=11 opens straight onto an incident.
+    // A DEOC has more than one screen and more than one person; being able to
+    // send a colleague the exact incident you are looking at is worth the six
+    // lines it costs.
+    const q = new URLSearchParams(window.location.search)
+    const d = Number(q.get('district'))
+    const i = Number(q.get('incident'))
+
+    const boot = async () => {
+      if (d) await setDistrict(d)
+      else await resync()
+      if (i) await selectIncident(i)
+    }
+    boot().catch(() => {})
+  }, [resync, selectIncident, setDistrict])
 
   return (
     <div className="app">
