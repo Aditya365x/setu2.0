@@ -3,15 +3,19 @@
 # The two frontends are NOT here — they are static builds on Vercel, pointed at
 # this API by VITE_API_ORIGIN. See docs/DEPLOY.md.
 #
-# Four resources: the API, the worker, Postgres and Redis. The worker is a
-# separate service on purpose and is the piece that rules out serverless
-# hosting entirely: it is sixteen permanent asyncio loops blocking on Redis
-# BLPOP, one per district. It serves no HTTP, has no public URL, and must simply
-# stay alive — without it reports arrive and cluster but nothing is ever scored,
-# assigned or dispatched.
+# Three resources on Render's FREE tier: the API, Postgres and Redis.
 #
-# Both run the same image with different commands, which is why there is only
-# one Dockerfile.
+# There is deliberately no separate worker service. Render offers no free plan
+# for background workers, and the optimiser is not optional — it is sixteen
+# permanent asyncio loops, one per district, and without them reports arrive and
+# cluster but nothing is ever scored, assigned or dispatched. So RUN_WORKER_IN_API
+# runs those loops inside the API process instead.
+#
+# That is a trade, not a simplification. A dedicated worker (which is what
+# docker-compose.yml runs, and what `plan: starter` would buy here) keeps the
+# solver off the request event loop and lets either side restart alone. Free
+# also means the service sleeps when idle, which takes the optimiser down with
+# it — open the dashboard a few minutes before you need it.
 
 services:
   # ── API ────────────────────────────────────────────────────────────────
@@ -20,7 +24,7 @@ services:
     runtime: docker
     dockerfilePath: ./backend/Dockerfile
     dockerContext: ./backend
-    plan: starter
+    plan: free
     region: singapore          # closest Render region to the Bay of Bengal
     healthCheckPath: /health
     autoDeploy: true
@@ -40,8 +44,16 @@ services:
 
       # First boot has no shell to run `make seed` in, so seed all 16 districts
       # on start. Every step checks for existing rows first, so restarts are a
-      # no-op. The first run inserts ~73,000 rows and takes a minute or two —
-      # hence the generous health-check tolerance above.
+      # no-op. The first run inserts ~73,000 rows and takes a minute or two,
+      # so expect the first health check to be slow.
+
+      # No free background-worker plan exists on Render, so the optimiser runs
+      # inside this process. A dedicated worker is the correct shape and is what
+      # docker-compose.yml does; this is the concession that makes a free
+      # deployment actually dispatch instead of silently piling up incidents.
+      - key: RUN_WORKER_IN_API
+        value: "true"
+
       - key: SEED_ON_START
         value: "true"
 
@@ -64,47 +76,11 @@ services:
       - key: PYTHONUNBUFFERED
         value: "1"
 
-  # ── worker ─────────────────────────────────────────────────────────────
-  - type: worker
-    name: setu-worker
-    runtime: docker
-    dockerfilePath: ./backend/Dockerfile
-    dockerContext: ./backend
-    dockerCommand: python -m app.workers.run
-    plan: starter
-    region: singapore
-    autoDeploy: true
-    envVars:
-      - key: DATABASE_URL
-        fromDatabase:
-          name: setu-db
-          property: connectionString
-      - key: REDIS_URL
-        fromService:
-          type: redis
-          name: setu-redis
-          property: connectionString
-      # Deliberately absent: SEED_ON_START. The API already seeded; two
-      # seeders racing each other achieves nothing.
-      - key: OFFLINE_MODE
-        value: "true"
-      - key: LIVE_CONDITIONS
-        value: "true"
-      # Must match the API's, or reference codes hash differently between the
-      # two processes.
-      - key: REPORTER_HASH_SALT
-        fromService:
-          type: web
-          name: setu-api
-          envVarKey: REPORTER_HASH_SALT
-      - key: PYTHONUNBUFFERED
-        value: "1"
-
   # ── Redis ──────────────────────────────────────────────────────────────
   # Optimizer queue, WebSocket pub/sub fan-out, CAP ETag and weather caches.
   - type: redis
     name: setu-redis
-    plan: starter
+    plan: free
     region: singapore
     maxmemoryPolicy: noeviction   # the optimize queue must not be evicted
     ipAllowList: []               # private network only
@@ -118,5 +94,5 @@ databases:
   - name: setu-db
     databaseName: setu
     user: setu
-    plan: basic-256mb
+    plan: free
     region: singapore

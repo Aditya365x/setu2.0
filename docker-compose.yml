@@ -45,6 +45,9 @@ services:
       STORAGE_PROVIDER: ${STORAGE_PROVIDER:-local}
       OFFLINE_MODE: ${OFFLINE_MODE:-true}
       LIVE_CONDITIONS: ${LIVE_CONDITIONS:-true}
+      # Off locally: the worker service below is the correct shape. Exists so the
+      # single-service free-tier deployment can be reproduced and tested here.
+      RUN_WORKER_IN_API: ${RUN_WORKER_IN_API:-false}
     ports: ["8000:8000"]
     volumes:
       - media:/data/media

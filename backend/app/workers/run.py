@@ -120,6 +120,31 @@ async def cap_loop(districts: list[tuple[int, str]]) -> None:
         await asyncio.sleep(settings.cap_poll_seconds)
 
 
+async def start_loops() -> list[asyncio.Task]:
+    """Spawn the optimiser and CAP loops as tasks, and hand them back.
+
+    Exists so the same loops can run either as a dedicated worker process
+    (`python -m app.workers.run`, which is correct) or inside the API process
+    (RUN_WORKER_IN_API, which is a concession to free hosting tiers that offer
+    no background-worker plan).
+
+    Embedding is genuinely worse and should be understood as a trade, not a
+    simplification: the solver then competes with request handling for the same
+    event loop, and a sleeping web service takes the optimiser down with it.
+    But a free tier with an embedded worker beats a free tier where reports
+    cluster and are never dispatched at all.
+    """
+    districts = await discover_districts()
+    log.info(
+        "optimiser embedded in API — %s district(s): %s",
+        len(districts),
+        ", ".join(f"{n}({i})" for i, n in districts),
+    )
+    tasks = [asyncio.create_task(optimizer_loop(i, n)) for i, n in districts]
+    tasks.append(asyncio.create_task(cap_loop(districts)))
+    return tasks
+
+
 async def main() -> None:
     await apply_schema()
     districts = await discover_districts()

@@ -5,6 +5,7 @@ All the expensive work happens in the worker, so a burst of two thousand
 reports never blocks on the solver.
 """
 
+import asyncio
 import contextlib
 import logging
 import os
@@ -41,7 +42,27 @@ async def lifespan(app: FastAPI):
             # recoverable by hand; a container that will not start is not.
             logging.getLogger("setu").exception("seed on start failed; continuing")
 
+    # Optionally run the optimiser here instead of as a separate process.
+    # See config.run_worker_in_api — this exists for hosts with no
+    # background-worker plan, and is a trade rather than a simplification.
+    worker_tasks: list = []
+    if settings.run_worker_in_api:
+        try:
+            from .workers.run import start_loops
+
+            worker_tasks = await start_loops()
+        except Exception:
+            logging.getLogger("setu").exception(
+                "could not start embedded optimiser; API will serve reads only"
+            )
+
     yield
+
+    for task in worker_tasks:
+        task.cancel()
+    for task in worker_tasks:
+        with contextlib.suppress(asyncio.CancelledError, Exception):
+            await task
     await engine.dispose()
 
 

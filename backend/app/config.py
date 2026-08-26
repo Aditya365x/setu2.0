@@ -60,6 +60,17 @@ class Settings(BaseSettings):
     live_conditions: bool = True
     conditions_endpoint: str = "https://api.open-meteo.com/v1/forecast"
 
+    # Run the optimiser inside the API process instead of as a separate
+    # worker. Off by default because a dedicated process is the correct shape:
+    # the solver does not then compete with request handling for the event
+    # loop, and either can be restarted alone.
+    #
+    # Turn it on only where the host offers no background-worker plan — Render's
+    # free tier being the case this exists for. Without it, reports ingest and
+    # cluster and then sit there forever, which looks exactly like a broken
+    # system and is worse than an embedded loop.
+    run_worker_in_api: bool = False
+
     # ── tenancy ───────────────────────────────────────────────────────────
     district_id: int = 1
 
