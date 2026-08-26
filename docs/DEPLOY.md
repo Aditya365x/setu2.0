@@ -3,10 +3,10 @@
 Two frontends on **Vercel**, the backend on **Render**.
 
 The split is forced by what the backend actually is. Vercel is serverless, and
-SETU's worker is sixteen permanent asyncio loops blocking on Redis `BLPOP` —
+SETU's optimiser is sixteen permanent asyncio loops blocking on Redis `BLPOP` —
 that is not a function that returns, it is a process that must stay alive. The
 WebSocket hub has the same problem. Everything else (PostGIS, Redis, the API)
-*could* run on Vercel; the worker cannot, and without it reports arrive and
+*could* run on Vercel; the optimiser cannot, and without it reports arrive and
 cluster but nothing is ever scored, assigned or dispatched.
 
 > **Before you rely on this for a demo:** the whole premise of this system is
@@ -19,8 +19,9 @@ cluster but nothing is ever scored, assigned or dispatched.
 
 ## 1. Backend on Render
 
-`render.yaml` at the repo root is a Blueprint: it declares all four resources,
-so you do not create them by hand.
+`render.yaml` at the repo root is a Blueprint: it declares every resource, on
+**free plans throughout**, so you do not create them by hand and are not asked
+for a card.
 
 1. Render dashboard → **New** → **Blueprint**
 2. Connect `github.com/Aditya365x/setu2.0`, branch `main`
@@ -28,10 +29,9 @@ so you do not create them by hand.
 
    | Resource | Type | Why |
    |---|---|---|
-   | `setu-api` | Web (Docker) | FastAPI — ingest, read models, WebSocket hub |
-   | `setu-worker` | Background worker | 16 optimiser loops + CAP poller |
-   | `setu-db` | PostgreSQL | PostGIS — every spatial query in §6 |
-   | `setu-redis` | Key Value | optimise queue, pub/sub, caches |
+   | `setu-api` | Web (Docker), free | FastAPI — ingest, read models, WebSocket hub, **and the 16 optimiser loops** |
+   | `setu-db` | PostgreSQL, free | PostGIS — every spatial query in §6 |
+   | `setu-redis` | Key Value, free | optimise queue, pub/sub, caches |
 
 4. **Apply**. First build takes several minutes (the API image is ~720 MB).
 
@@ -44,22 +44,38 @@ so you do not create them by hand.
 * **`REPORTER_HASH_SALT` and `JWT_SECRET`** use `generateValue: true`, so Render
   creates random secrets. The salt is what makes the phone-number HMAC
   irreversible — shipping the dev default would de-anonymise every report.
-  The worker reads the API's salt so both processes hash identically.
+* **`RUN_WORKER_IN_API=true`** — see below.
 * **`SEED_ON_START=true`** on the API only. First boot seeds all 16 districts
   (~73,000 rows, a minute or two). Every step checks for existing rows, so
   restarts are a no-op. Expect the first health check to be slow.
 
-### Plans
+### Why there is no worker service
 
-The Blueprint asks for `starter` / `basic-256mb`, which are paid. You can drop
-to free tiers, but know what you are trading:
+Render offers **no free plan for background workers** — the cheapest is paid.
+That is the only reason a Blueprint for this app would ever ask for a card;
+nothing in SETU needs a "pro" feature. Free web services, free Postgres and free
+Key Value all exist.
 
-* **Free web service sleeps after ~15 minutes idle** → a cold start in front of
-  a judge.
-* **Free background workers are not offered.** If you skip the worker to save
-  money, reports will cluster and then sit there forever. It is the one service
-  you cannot economise on.
-* **Free Postgres expires after 90 days.**
+But the optimiser is not something you can economise away. Drop it and reports
+still arrive, still cluster into incidents, and are then never scored, assigned
+or dispatched — a board that fills up and never moves.
+
+So the Blueprint sets `RUN_WORKER_IN_API=true` and runs those loops inside the
+API process. **Understand this as a trade, not a simplification:**
+
+| | Dedicated worker (compose, paid Render) | Embedded (free Render) |
+|---|---|---|
+| Solver vs. request handling | separate processes | same event loop |
+| Restart blast radius | either alone | both together |
+| Idle behaviour | worker always awake | sleeps with the web service |
+
+Also on free: the web service **sleeps after ~15 minutes idle**, which now takes
+the optimiser down with it — open the dashboard a few minutes before you present
+and let a cycle run. And **free Postgres expires after 90 days.**
+
+If you do have a paid account, prefer the correct shape: set the API to
+`plan: starter`, drop `RUN_WORKER_IN_API`, and add back a worker service running
+the same image with `command: python -m app.workers.run`.
 
 ### After it is live
 
@@ -158,9 +174,16 @@ The failure is quiet: the map degrades to a flat dark ground with the incidents
 still on it, by design. You will not get an error, you will get "why is the map
 black".
 
-**Worker idle.** It serves no HTTP and has no public URL, so nothing keeps it
-warm. Confirm from its logs that cycles are still running:
-`[Ganjam] cycle(tick): 30 incidents, 40 units...`
+**Nothing is being dispatched.** Check the API log for the embedded optimiser
+announcing itself at boot, then for cycles:
+
+```
+optimiser embedded in API — 16 district(s): Ganjam(1), Puri(2), …
+[Ganjam] cycle(tick): 30 incidents, 40 units, mean 18.4 -> 21.1 min, 202ms
+```
+
+No first line means `RUN_WORKER_IN_API` did not reach the process. No cycles
+after it means the service is asleep — hit any URL to wake it.
 
 **SMS inbound** needs a Twilio/Exotel webhook pointed at
 `$API/api/v1/ingest/sms`. Outbound and the mock gateway are unaffected.
