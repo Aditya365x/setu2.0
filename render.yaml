@@ -1,0 +1,122 @@
+# Render Blueprint for the SETU backend.
+#
+# The two frontends are NOT here — they are static builds on Vercel, pointed at
+# this API by VITE_API_ORIGIN. See docs/DEPLOY.md.
+#
+# Four resources: the API, the worker, Postgres and Redis. The worker is a
+# separate service on purpose and is the piece that rules out serverless
+# hosting entirely: it is sixteen permanent asyncio loops blocking on Redis
+# BLPOP, one per district. It serves no HTTP, has no public URL, and must simply
+# stay alive — without it reports arrive and cluster but nothing is ever scored,
+# assigned or dispatched.
+#
+# Both run the same image with different commands, which is why there is only
+# one Dockerfile.
+
+services:
+  # ── API ────────────────────────────────────────────────────────────────
+  - type: web
+    name: setu-api
+    runtime: docker
+    dockerfilePath: ./backend/Dockerfile
+    dockerContext: ./backend
+    plan: starter
+    region: singapore          # closest Render region to the Bay of Bengal
+    healthCheckPath: /health
+    autoDeploy: true
+    envVars:
+      # Render injects postgresql://... and SQLAlchemy's async engine rejects
+      # it. config.py rewrites the prefix to postgresql+asyncpg:// so this can
+      # be wired straight through.
+      - key: DATABASE_URL
+        fromDatabase:
+          name: setu-db
+          property: connectionString
+      - key: REDIS_URL
+        fromService:
+          type: redis
+          name: setu-redis
+          property: connectionString
+
+      # First boot has no shell to run `make seed` in, so seed all 16 districts
+      # on start. Every step checks for existing rows first, so restarts are a
+      # no-op. The first run inserts ~73,000 rows and takes a minute or two —
+      # hence the generous health-check tolerance above.
+      - key: SEED_ON_START
+        value: "true"
+
+      # CAP alerts run from fixtures/ so the demo works with no egress.
+      - key: OFFLINE_MODE
+        value: "true"
+      # Live weather drives the per-district hazard outlook. Separate switch:
+      # CAP has a fixture to fall back on, conditions do not.
+      - key: LIVE_CONDITIONS
+        value: "true"
+
+      # MUST be set. The salt is what makes the phone-number HMAC
+      # irreversible; shipping the dev default would de-anonymise every report
+      # ever filed. generateValue gives a random value Render keeps secret.
+      - key: REPORTER_HASH_SALT
+        generateValue: true
+      - key: JWT_SECRET
+        generateValue: true
+
+      - key: PYTHONUNBUFFERED
+        value: "1"
+
+  # ── worker ─────────────────────────────────────────────────────────────
+  - type: worker
+    name: setu-worker
+    runtime: docker
+    dockerfilePath: ./backend/Dockerfile
+    dockerContext: ./backend
+    dockerCommand: python -m app.workers.run
+    plan: starter
+    region: singapore
+    autoDeploy: true
+    envVars:
+      - key: DATABASE_URL
+        fromDatabase:
+          name: setu-db
+          property: connectionString
+      - key: REDIS_URL
+        fromService:
+          type: redis
+          name: setu-redis
+          property: connectionString
+      # Deliberately absent: SEED_ON_START. The API already seeded; two
+      # seeders racing each other achieves nothing.
+      - key: OFFLINE_MODE
+        value: "true"
+      - key: LIVE_CONDITIONS
+        value: "true"
+      # Must match the API's, or reference codes hash differently between the
+      # two processes.
+      - key: REPORTER_HASH_SALT
+        fromService:
+          type: web
+          name: setu-api
+          envVarKey: REPORTER_HASH_SALT
+      - key: PYTHONUNBUFFERED
+        value: "1"
+
+  # ── Redis ──────────────────────────────────────────────────────────────
+  # Optimizer queue, WebSocket pub/sub fan-out, CAP ETag and weather caches.
+  - type: redis
+    name: setu-redis
+    plan: starter
+    region: singapore
+    maxmemoryPolicy: noeviction   # the optimize queue must not be evicted
+    ipAllowList: []               # private network only
+
+databases:
+  # ── Postgres + PostGIS ─────────────────────────────────────────────────
+  # PostGIS is not optional. Clustering, the 50 km lookups, incident centroids,
+  # shelter proximity and every boundary test are ST_* calls in SQL — there is
+  # no application-layer fallback. Render's Postgres supports the extension;
+  # schema.sql runs CREATE EXTENSION IF NOT EXISTS postgis on boot.
+  - name: setu-db
+    databaseName: setu
+    user: setu
+    plan: basic-256mb
+    region: singapore

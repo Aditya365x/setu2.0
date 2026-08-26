@@ -1,5 +1,6 @@
 """Runtime configuration. Every tunable from Appendix B lives here."""
 
+from pydantic import field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -9,6 +10,28 @@ class Settings(BaseSettings):
     # ── infrastructure ────────────────────────────────────────────────────
     database_url: str = "postgresql+asyncpg://setu:setu@localhost:5433/setu"
     redis_url: str = "redis://localhost:6379/0"
+
+    @field_validator("database_url")
+    @classmethod
+    def _force_async_driver(cls, v: str) -> str:
+        """Rewrite a sync Postgres URL to the asyncpg driver.
+
+        Every managed host — Render, Railway, Heroku, Fly — injects
+        `postgresql://user:pass@host/db`, because that is what psql and every
+        sync client expect. SQLAlchemy's async engine refuses it with
+        "the asyncio extension requires an async driver to be used", the API
+        dies on startup, and the platform reports a failed health check against
+        a port nothing ever bound. The cause is one missing `+asyncpg`.
+
+        Normalising here rather than in the deploy docs means the platform's
+        own auto-injected variable just works. `postgres://` is included
+        because Heroku-style URLs still appear in the wild, and an explicit
+        driver (`+asyncpg`, `+psycopg`) is left untouched.
+        """
+        for prefix in ("postgresql://", "postgres://"):
+            if v.startswith(prefix):
+                return "postgresql+asyncpg://" + v[len(prefix):]
+        return v
 
     # ── pluggable adapters (§9.1 idiom: selected by env var) ──────────────
     routing_provider: str = "haversine"   # haversine | osrm
