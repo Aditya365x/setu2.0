@@ -25,9 +25,8 @@ make demo                        # Cyclone Landfall: 200 reports over 90s
 
 | Surface | URL |
 |---|---|
-| DEOC dashboard | http://localhost:5173 |
-| Citizen PWA | http://localhost:5174 |
-| API docs | http://localhost:8000/docs |
+| DEOC dashboard | https://setu2-dashboard.vercel.app/ |
+| Citizen PWA | https://setu2-citizen.vercel.app/) |
 
 `make reset` returns to a clean, seeded state in about five seconds. Use it
 between rehearsals — it is what makes ten run-throughs possible instead of three.
