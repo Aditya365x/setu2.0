@@ -2,6 +2,13 @@
 
 **Real-time disaster early-warning and resource coordination platform.**
 
+## Live applications
+
+- **DEOC Operations Dashboard:** [https://setu2-dashboard.vercel.app/](https://setu2-dashboard.vercel.app/)
+- **Citizen PWA:** [https://setu2-citizen.vercel.app/](https://setu2-citizen.vercel.app/)
+
+The DEOC dashboard is used by emergency-control-room operators to monitor incidents, alerts, resources, shelters, assignments, and live metrics. The Citizen PWA is used to submit emergency reports, locate shelters, view alerts, and track a report using its reference code.
+
 > India's warning system already works. What breaks is the six hours after the warning.
 
 Detection (IMD, CWC, INCOIS) and dissemination (NDMA SACHET) are mature national
@@ -22,12 +29,6 @@ docker compose up --build -d     # or: make up
 make seed                        # Ganjam district, 62 shelters, 40 units
 make demo                        # Cyclone Landfall: 200 reports over 90s
 ```
-
-| Surface | URL |
-|---|---|
-| DEOC dashboard | http://localhost:5173 |
-| Citizen PWA | http://localhost:5174 |
-| API docs | http://localhost:8000/docs |
 
 `make reset` returns to a clean, seeded state in about five seconds. Use it
 between rehearsals — it is what makes ten run-throughs possible instead of three.
